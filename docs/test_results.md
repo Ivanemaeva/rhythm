@@ -1,6 +1,6 @@
 # Checks run on this version
 
-Commands were run on Windows with Python 3.12 on 2026-10-04. All data is synthetic; no real Ring device, Ring webhook or SMTP server was involved. The Ring client checks use in-process mocked HTTP responses.
+Commands were run on Windows with Python 3.13 on 2026-10-04. All data is synthetic; no real Ring device, Ring webhook or SMTP server was involved. The Ring client checks use in-process mocked HTTP responses.
 
 | Check | Command | Result |
 |---|---|---|
@@ -16,7 +16,6 @@ Silent morning (pending before the cutoff, `care_alert` after it), normal and la
 
 ## Not verified
 
-- Real email delivery to a phone (SMTP credentials not configured here).
 - Live Ring webhook delivery, offline transitions, and real `motion`/`ding` history from a physical device.
 - Anything about real-household threshold quality.
 - A fresh `git clone` walkthrough on Windows (do this before submitting).

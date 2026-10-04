@@ -34,7 +34,7 @@ Doorbell and motion apps notify about everything, so people mute them. Rhythm do
 | Past activity (weeks of mornings) | **Simulated.** Event History only returns events created after the account exists, and the Playground only produced `on_demand` live-view events, which Rhythm deliberately ignores (a live-view session is not motion or a doorbell press) |
 | Webhook handler | Written from the documented payload and signature format, covered by tests with synthetic payloads. **Not verified with live Ring webhook delivery** |
 | Offline transition | Handled in code and tests; **not observed live** (the Playground device stays online) |
-| Email | Implemented with SMTP and tested with a fake sender. See the test log for whether a real email was delivered |
+| Email | **Real.** A labeled `[SIMULATED DEMO]` alert was delivered to a phone through Gmail SMTP (event times were synthetic) |
 
 The demo replay clearly labels its data as synthetic.
 
