@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Rhythm · Morning check-in</title>
+  <style>
+    :root { color-scheme: light; --ink:#19302d; --muted:#71817b; --line:#dce5df; --paper:#f6f7f2; --card:#fff; --green:#2d7665; --green-soft:#e8f3ed; --amber:#b77a25; --red:#a94e42; }
+    * { box-sizing:border-box; }
+    body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+    header { display:flex; justify-content:space-between; align-items:center; gap:20px; padding:22px max(24px,calc((100vw - 1180px)/2)); background:#fff; border-bottom:1px solid var(--line); }
+    .brand { display:flex; align-items:center; gap:12px; font-weight:750; letter-spacing:.02em; font-size:20px; }
+    .mark { width:34px; height:34px; display:grid; place-items:center; border-radius:50%; background:var(--green-soft); color:var(--green); }
+    .tagline { color:var(--muted); font-size:13px; }
+    main { max-width:1180px; margin:32px auto 52px; padding:0 24px; }
+    h1 { font-size:28px; line-height:1.2; margin:0 0 6px; letter-spacing:-.03em; }
+    h2 { font-size:16px; margin:0; letter-spacing:-.01em; }
+    .intro { color:var(--muted); margin:0 0 22px; }
+    .state-grid { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:12px; margin:20px 0; }
+    .card { background:var(--card); border:1px solid var(--line); border-radius:14px; box-shadow:0 3px 12px #183b2808; }
+    .stat { padding:17px 18px; min-height:105px; }
+    .label { color:var(--muted); font-size:12px; text-transform:uppercase; font-weight:700; letter-spacing:.08em; }
+    .value { font-weight:720; font-size:20px; margin-top:8px; }
+    .detail { color:var(--muted); font-size:12px; margin-top:3px; }
+    #suppression { font-size:13px; line-height:1.35; font-weight:650; }
+    .pill { display:inline-flex; align-items:center; gap:7px; border-radius:20px; background:var(--green-soft); color:#286554; padding:5px 10px; font-size:13px; font-weight:700; }
+    .pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+    .pill.offline { background:#fbecea; color:var(--red); }
+    .pill.unknown { background:#edf0ed; color:#68736e; }
+    .layout { display:grid; grid-template-columns:minmax(0,1.6fr) minmax(290px,.9fr); gap:16px; align-items:start; }
+    .panel { padding:20px; }
+    .panel-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:10px; }
+    .sub { color:var(--muted); font-size:13px; margin:4px 0 0; }
+    .legend { display:flex; gap:14px; flex-wrap:wrap; color:var(--muted); font-size:12px; }
+    .legend span { display:flex; align-items:center; gap:6px; }
+    .dot { width:9px; height:9px; border-radius:50%; background:var(--green); }
+    .dot.weekend { background:var(--amber); }
+    .dot.alert-day { background:var(--red); }
+    .chart-wrap { overflow-x:auto; }
+    #routine-chart { display:block; width:100%; min-width:550px; height:300px; }
+    .empty-chart { color:var(--muted); padding:36px 12px; text-align:center; }
+    .alert-list { display:flex; flex-direction:column; gap:10px; margin-top:14px; }
+    .alert { border:1px solid var(--line); border-left:4px solid var(--amber); border-radius:9px; padding:11px 12px; background:#fffdfa; }
+    .alert-date { font-weight:720; font-size:13px; margin-bottom:3px; }
+    .alert-reason { color:#566761; font-size:13px; }
+    .empty-alerts { border:1px dashed var(--line); border-radius:9px; color:var(--muted); padding:22px 14px; text-align:center; font-size:13px; }
+    .reply-panel { margin-top:16px; padding:20px; }
+    .reply-actions { display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin-top:14px; }
+    button { appearance:none; border:0; border-radius:8px; padding:10px 14px; background:var(--green); color:white; font:650 14px system-ui,sans-serif; cursor:pointer; }
+    button:hover { filter:brightness(.94); }
+    button.secondary { background:#eaf0ec; color:#31554a; }
+    input[type=date] { border:1px solid var(--line); border-radius:8px; padding:9px 10px; font:14px system-ui,sans-serif; color:var(--ink); }
+    #reply-message { min-height:22px; margin:10px 0 0; color:var(--green); font-size:13px; }
+    .footer { margin-top:20px; color:var(--muted); font-size:12px; }
+    @media (max-width:850px) { .state-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .layout { grid-template-columns:1fr; } }
+    @media (max-width:520px) { header { align-items:flex-start; flex-direction:column; } main { margin-top:24px; padding:0 15px; } .state-grid { gap:8px; } .stat { padding:13px; min-height:92px; } .value { font-size:17px; } .panel { padding:15px; } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand"><span class="mark" aria-hidden="true">◔</span><span>Rhythm</span></div>
+    <div class="tagline">A gentle morning check-in · <span id="timezone">—</span></div>
+  </header>
+  <main>
+    <h1>Morning routine</h1>
+    <p class="intro">A small, explainable view of the routine Rhythm has learned.</p>
+
+    <section class="state-grid" aria-label="Current state">
+      <article class="card stat"><div class="label">Mode</div><div class="value" id="mode">Loading…</div><div class="detail" id="learning-detail"></div></article>
+      <article class="card stat"><div class="label">Device</div><div class="value"><span class="pill unknown" id="device">Unknown</span></div><div class="detail" id="device-id"></div></article>
+      <article class="card stat"><div class="label">Today</div><div class="value" id="today">—</div><div class="detail">Household local date</div></article>
+      <article class="card stat"><div class="label">Alert suppression</div><div class="value" id="suppression">—</div><div class="detail">One care email per local day</div></article>
+    </section>
+
+    <section class="layout">
+      <article class="card panel">
+        <div class="panel-head">
+          <div><h2>First activity by day</h2><p class="sub">Three weeks of routine + today · local time · earliest motion or doorbell event</p></div>
+          <div class="legend"><span><i class="dot"></i>Weekday</span><span><i class="dot weekend"></i>Weekend</span><span><i class="dot alert-day"></i>Alert day</span></div>
+        </div>
+        <div class="chart-wrap"><svg id="routine-chart" viewBox="0 0 900 300" role="img" aria-label="Chart of first activity times by day"></svg></div>
+        <div class="empty-chart" id="empty-chart" hidden>No activity metadata stored for this period yet.</div>
+      </article>
+      <article class="card panel">
+        <div class="panel-head"><div><h2>Alerts fired</h2><p class="sub">Each stored reason shows why Rhythm spoke up.</p></div></div>
+        <div class="alert-list" id="alerts"></div>
+      </article>
+    </section>
+
+    <section class="card reply-panel">
+      <h2>Family reply</h2>
+      <p class="sub">These local demo actions are saved with this household’s Rhythm data.</p>
+      <div class="reply-actions">
+        <button id="fine-button" type="button">She’s fine</button>
+        <label for="away-until" class="sub">Away through</label>
+        <input id="away-until" type="date">
+        <button id="away-button" type="button" class="secondary">She’s away</button>
+      </div>
+      <p id="reply-message" role="status" aria-live="polite"></p>
+    </section>
+
+    <p class="footer">Rhythm is a check-in aid, not a safety or medical device.</p>
+  </main>
+  <script>
+    const svgNS = 'http://www.w3.org/2000/svg';
+    const colors = { ink:'#19302d', muted:'#82908a', grid:'#e7ede8', weekday:'#2d7665', weekend:'#b77a25' };
+    const el = id => document.getElementById(id);
+    // Optional admin token: open the page as /?token=YOUR_TOKEN when RHYTHM_ADMIN_TOKEN is set.
+    const adminToken = new URLSearchParams(location.search).get('token') || '';
+    const authHeaders = (extra = {}) => adminToken ? { ...extra, 'X-Admin-Token': adminToken } : extra;
+    function svg(tag, attrs = {}) {
+      const node = document.createElementNS(svgNS, tag);
+      for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, value);
+      return node;
+    }
+    function drawChart(points) {
+      const chart = el('routine-chart');
+      chart.replaceChildren();
+      if (!points.length) { chart.hidden = true; el('empty-chart').hidden = false; return; }
+      chart.hidden = false; el('empty-chart').hidden = true;
+      const width = 900, height = 300, left = 58, right = 18, top = 16, bottom = 38;
+      const minMinute = 6 * 60, maxMinute = 14 * 60;
+      const plotWidth = width-left-right, plotHeight = height-top-bottom;
+      for (let hour=6; hour<=14; hour+=2) {
+        const y = top + (maxMinute-hour*60)/(maxMinute-minMinute)*plotHeight;
+        chart.append(svg('line', {x1:left,y1:y,x2:width-right,y2:y,stroke:colors.grid,'stroke-width':1}));
+        const label = svg('text', {x:left-10,y:y+4,'text-anchor':'end',fill:colors.muted,'font-size':12});
+        label.textContent = `${String(hour).padStart(2,'0')}:00`; chart.append(label);
+      }
+      const sorted = [...points].sort((a,b)=>a.date.localeCompare(b.date));
+      sorted.forEach((point,index) => {
+        const x = sorted.length===1 ? left+plotWidth/2 : left+index/(sorted.length-1)*plotWidth;
+        const y = top+(maxMinute-point.minutes)/(maxMinute-minMinute)*plotHeight;
+        chart.append(svg('circle',{cx:x,cy:y,r:point.alert?8:6,fill:point.alert?'#a94e42':point.bucket==='weekend'?colors.weekend:colors.weekday,stroke:'#fff','stroke-width':point.alert?3:2}));
+        const title = svg('title'); title.textContent = `${point.date} ${point.time} (${point.bucket})`; chart.lastChild.append(title);
+        if (index===0 || index===sorted.length-1 || index%4===0) {
+          const label=svg('text',{x,y:height-12,'text-anchor':'middle',fill:colors.muted,'font-size':11});
+          label.textContent=point.date.slice(5); chart.append(label);
+        }
+      });
+    }
+    function paint(data) {
+      el('timezone').textContent=data.timezone;
+      el('today').textContent=data.state.today;
+      el('mode').textContent=data.state.mode==='learning'?'Learning':'Active';
+      el('learning-detail').textContent=data.state.mode==='learning'?`Quiet learning started ${data.state.learning_started}; active ${data.state.active_on}.`:`Learned routine since ${data.state.learning_started}.`;
+      el('suppression').textContent=data.state.suppression;
+      el('device').textContent=data.state.device[0].toUpperCase()+data.state.device.slice(1);
+      el('device').className=`pill ${data.state.device}`;
+      el('device-id').textContent=data.device_id?`Device ${data.device_id}`:'No device selected';
+      drawChart(data.routine);
+      const alerts=el('alerts'); alerts.replaceChildren();
+      if (!data.alerts.length) {
+        const empty=document.createElement('div'); empty.className='empty-alerts'; empty.textContent='No care alerts have fired yet.'; alerts.append(empty);
+      } else {
+        for (const alert of data.alerts) {
+          const item=document.createElement('article'); item.className='alert';
+          const day=document.createElement('div'); day.className='alert-date'; day.textContent=`${alert.local_day} · ${alert.status}`;
+          const reason=document.createElement('div'); reason.className='alert-reason'; reason.textContent=alert.reason;
+          item.append(day,reason); alerts.append(item);
+        }
+      }
+      if (!el('away-until').value) el('away-until').min=data.state.today;
+    }
+    async function refresh() {
+      const response=await fetch('/api/dashboard',{headers:authHeaders()});
+      if (!response.ok) throw new Error(response.status===401||response.status===403?'Open this page as /?token=YOUR_TOKEN (see RHYTHM_ADMIN_TOKEN).':'Could not load Rhythm data.');
+      paint(await response.json());
+    }
+    async function reply(path, body={}) {
+      const response=await fetch(path,{method:'POST',headers:authHeaders({'Content-Type':'application/json'}),body:JSON.stringify(body)});
+      const data=await response.json();
+      if (!response.ok) throw new Error(data.detail||'Reply could not be saved.');
+      el('reply-message').textContent=data.message;
+      await refresh();
+    }
+    el('fine-button').addEventListener('click',()=>reply('/api/reply/fine').catch(e=>el('reply-message').textContent=e.message));
+    el('away-button').addEventListener('click',()=>{
+      const until=el('away-until').value;
+      if (!until) { el('reply-message').textContent='Choose the date to pause through.'; return; }
+      reply('/api/reply/away',{until}).catch(e=>el('reply-message').textContent=e.message);
+    });
+    refresh().catch(e=>{ el('mode').textContent='Unavailable'; el('reply-message').textContent=e.message; });
+  </script>
+</body>
+</html>
