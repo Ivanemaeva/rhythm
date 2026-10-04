@@ -31,9 +31,16 @@ os.environ["RING_INGESTION_MODE"] = "poll"
 os.environ.pop("RHYTHM_ADMIN_TOKEN", None)
 
 from rhythm.config import Settings  # noqa: E402
-from rhythm.email_delivery import deliver_care_alert, deliver_offline_notice  # noqa: E402
+from rhythm.email_delivery import (
+    _html_email_body,
+    deliver_care_alert,
+    deliver_offline_notice,
+    deliver_all_clear,
+    localize,
+)  # noqa: E402
 from rhythm.ingestion import ingest_history_item, ingest_webhook, timestamp_ms_to_local  # noqa: E402
 from rhythm.ring_api import RingApi  # noqa: E402
+from rhythm.reply_links import issue_reply_token  # noqa: E402
 from rhythm.rules import decide_for_day  # noqa: E402
 from rhythm.storage import Store  # noqa: E402
 from scripts.check_morning import run_once  # noqa: E402
@@ -45,7 +52,15 @@ SUNDAY = date(2026, 10, 4)
 
 
 def make_settings(path: Path) -> Settings:
-    return replace(Settings.from_env(), database_path=path, ring_device_id=DEVICE, ring_access_token="")
+    return replace(
+        Settings.from_env(),
+        database_path=path,
+        ring_device_id=DEVICE,
+        ring_access_token="",
+        alert_to="family@example.test",
+        reply_token_secret="test-reply-secret",
+        public_base_url="http://127.0.0.1:8000",
+    )
 
 
 def webhook(event_id: str, when: datetime, kind: str = "motion_detected") -> dict:
@@ -111,7 +126,9 @@ class RuleTests(RhythmCase):
         self.assertEqual(before["samples"], 10)
         # A late morning on a previous weekday that already triggered an alert is excluded from learning.
         late_day = THURSDAY - timedelta(days=1)
-        self.store.claim_alert_day(late_day.isoformat(), "care_alert", "late", datetime.now(timezone.utc).isoformat())
+        self.store.claim_alert_day(
+            late_day.isoformat(), "care_alert", "late", datetime.now(timezone.utc).isoformat()
+        )
         self.store.mark_alert_sent(late_day.isoformat())
         after = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 11))
         self.assertEqual(after["samples"], 9)
@@ -137,7 +154,9 @@ class RuleTests(RhythmCase):
 
     def test_away_pauses_then_alerts_resume(self) -> None:
         self.seed_history(THURSDAY)
-        self.store.record_reply(THURSDAY.isoformat(), "away", datetime.now(timezone.utc).isoformat(), "2026-10-02")
+        self.store.record_reply(
+            THURSDAY.isoformat(), "away", datetime.now(timezone.utc).isoformat(), "2026-10-02"
+        )
         for day in (THURSDAY, THURSDAY + timedelta(days=1)):
             result = decide_for_day(self.store, self.settings, DEVICE, day, at(day, 11))
             self.assertEqual(result["decision"], "paused_away")
@@ -160,18 +179,40 @@ class DeliveryTests(RhythmCase):
         def failing(settings, subject, body):
             raise OSError("smtp down")
 
-        with self.assertRaises(OSError):
+        with self.assertRaises(RuntimeError):
             deliver_care_alert(self.store, self.settings, THURSDAY, result, failing)
         self.assertIsNone(self.store.alert_status(THURSDAY.isoformat()))  # released, so a retry can send
 
-        first = deliver_care_alert(self.store, self.settings, THURSDAY, result, lambda s, subj, body: sent.append((subj, body)))
-        second = deliver_care_alert(self.store, self.settings, THURSDAY, result, lambda s, subj, body: sent.append((subj, body)))
+        first = deliver_care_alert(
+            self.store, self.settings, THURSDAY, result, lambda s, subj, body: sent.append((subj, body))
+        )
+        second = deliver_care_alert(
+            self.store, self.settings, THURSDAY, result, lambda s, subj, body: sent.append((subj, body))
+        )
         self.assertEqual((first["delivery"], second["delivery"]), ("sent", "suppressed"))
         self.assertEqual(len(sent), 1)
         body = sent[0][1]
         self.assertIn("Why Rhythm spoke up:", body)
         self.assertIn("not a safety or medical device", body)
         self.assertIn("front door", body)
+        self.assertIn("/reply/", body)
+        self.assertIn("She's fine:", body)
+        self.assertIn("She's away until…:", body)
+        html_body = _html_email_body(body)
+        self.assertIn('href="http://127.0.0.1:8000/reply/', html_body)
+        self.assertIn("She's fine</a>", html_body)
+
+    def test_alert_is_still_sent_without_reply_link_secret(self) -> None:
+        self.seed_history(THURSDAY)
+        result = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 11))
+        outbox: list[str] = []
+        settings = replace(self.settings, reply_token_secret="", alert_to="family@example.test")
+        delivery = deliver_care_alert(
+            self.store, settings, THURSDAY, result, lambda s, subject, body: outbox.append(body)
+        )
+        self.assertEqual(delivery["delivery"], "sent")
+        self.assertIn("Why Rhythm spoke up:", outbox[0])
+        self.assertNotIn("/reply/", outbox[0])
 
     def test_run_once_sends_silent_morning_alert_once(self) -> None:
         self.seed_history(THURSDAY)
@@ -197,7 +238,10 @@ class DeliveryTests(RhythmCase):
         self.assertEqual((morning["delivery"], again["delivery"]), ("sent", "suppressed"))
         self.assertEqual(outbox, ["Rhythm: we can't see the device"])
         result = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 9))
-        self.assertEqual(deliver_offline_notice(self.store, self.settings, THURSDAY, result, sender)["delivery"], "suppressed")
+        self.assertEqual(
+            deliver_offline_notice(self.store, self.settings, THURSDAY, result, sender)["delivery"],
+            "suppressed",
+        )
 
 
 class IngestionTests(RhythmCase):
@@ -209,9 +253,15 @@ class IngestionTests(RhythmCase):
 
     def test_history_ingests_motion_and_ding_but_not_on_demand(self) -> None:
         def item(item_id: str, kind: str) -> dict:
-            return {"id": item_id, "attributes": {"event_type": kind, "start": 1791136314302, "end": 1791136354014}}
+            return {
+                "id": item_id,
+                "attributes": {"event_type": kind, "start": 1791136314302, "end": 1791136354014},
+            }
 
-        results = [ingest_history_item(item(f"e-{kind}", kind), self.store, TZ, DEVICE) for kind in ("motion", "ding", "on_demand")]
+        results = [
+            ingest_history_item(item(f"e-{kind}", kind), self.store, TZ, DEVICE)
+            for kind in ("motion", "ding", "on_demand")
+        ]
         self.assertEqual(results, [True, True, False])
         self.assertEqual(self.store.count_events(DEVICE), 2)
 
@@ -235,15 +285,23 @@ class RingApiTests(RhythmCase):
         first = at(THURSDAY, 8, 15)
         stamp = int(first.astimezone(timezone.utc).timestamp() * 1000)
         status = {"data": {"attributes": {"online": True, "reported_at": "2026-10-01T06:15:00Z"}}}
-        history = {"data": [
-            {"id": "motion-1", "attributes": {"event_type": "motion", "start": stamp}},
-            {"id": "live-view-1", "attributes": {"event_type": "on_demand", "start": stamp}},
-            {"id": "ding-1", "attributes": {"event_type": "ding", "start": stamp + 60_000}},
-        ], "links": {}}
+        history = {
+            "data": [
+                {"id": "motion-1", "attributes": {"event_type": "motion", "start": stamp}},
+                {"id": "live-view-1", "attributes": {"event_type": "on_demand", "start": stamp}},
+                {"id": "ding-1", "attributes": {"event_type": "ding", "start": stamp + 60_000}},
+            ],
+            "links": {},
+        }
         client = Mock()
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=False)
         client.get.side_effect = [
+            httpx.Response(
+                200,
+                json={"data": [{"id": DEVICE}]},
+                request=httpx.Request("GET", "https://example.test/devices"),
+            ),
             httpx.Response(200, json=status, request=httpx.Request("GET", "https://example.test/status")),
             httpx.Response(200, json=history, request=httpx.Request("GET", "https://example.test/events")),
         ]
@@ -257,7 +315,7 @@ class RingApiTests(RhythmCase):
         events = self.store.events_for_device(DEVICE)
         self.assertEqual([row["event_type"] for row in events], ["motion", "doorbell"])
         self.assertEqual(events[0]["occurred_at_local"], first.isoformat())
-        self.assertEqual(client.get.call_count, 2)
+        self.assertEqual(client.get.call_count, 3)
 
     def test_forbidden_history_starts_learning_without_losing_status(self) -> None:
         status = {"online": True, "reported_at": "2026-10-01T06:15:00Z"}
@@ -265,6 +323,11 @@ class RingApiTests(RhythmCase):
         client.__enter__ = Mock(return_value=client)
         client.__exit__ = Mock(return_value=False)
         client.get.side_effect = [
+            httpx.Response(
+                200,
+                json={"data": [{"id": DEVICE}]},
+                request=httpx.Request("GET", "https://example.test/devices"),
+            ),
             httpx.Response(200, json=status, request=httpx.Request("GET", "https://example.test/status")),
             httpx.Response(403, json={}, request=httpx.Request("GET", "https://example.test/events")),
         ]
@@ -275,6 +338,232 @@ class RingApiTests(RhythmCase):
         self.assertFalse(result["history_available"])
         self.assertIs(self.store.device_online(DEVICE), True)
         self.assertEqual(self.store.get_state("learning_started_local"), datetime.now(TZ).date().isoformat())
+
+    def test_sync_discovers_all_devices(self) -> None:
+        stamp = int(at(THURSDAY, 8).astimezone(timezone.utc).timestamp() * 1000)
+        responses = [
+            {"data": [{"id": "one"}, {"id": "two"}]},
+            {"online": True},
+            {"data": [{"id": "e1", "attributes": {"event_type": "motion", "start": stamp}}], "links": {}},
+            {"online": False},
+            {
+                "data": [{"id": "e2", "attributes": {"event_type": "ding", "start": stamp + 60000}}],
+                "links": {},
+            },
+        ]
+        client = Mock()
+        client.__enter__ = Mock(return_value=client)
+        client.__exit__ = Mock(return_value=False)
+        client.get.side_effect = [
+            httpx.Response(200, json=x, request=httpx.Request("GET", "https://example.test/"))
+            for x in responses
+        ]
+        settings = replace(self.settings, ring_device_id="", ring_access_token="token")
+        with patch("rhythm.ring_api.httpx.Client", return_value=client):
+            result = RingApi(settings, self.store).sync()
+        self.assertEqual(result["devices"], 2)
+        self.assertEqual({r["device_id"] for r in self.store.events_for_devices()}, {"one", "two"})
+        self.assertIs(self.store.home_online(), True)
+
+
+class AddedFeatureTests(RhythmCase):
+    def test_localized_threshold_reason_and_reply_buttons(self) -> None:
+        subject, body = localize(
+            "A gentle check-in: later than usual",
+            "Why Rhythm spoke up: First activity 10:35 is later than 10:00. She's fine: https://example.test/token",
+            "it",
+        )
+        self.assertIn("Perché Rhythm ti avvisa", body)
+        self.assertIn("La prima attività delle 10:35", body)
+        self.assertIn("Sta bene: https://example.test/token", body)
+        self.assertIn("Un piccolo controllo", subject)
+
+    def test_first_activity_aggregates_devices_and_rolling_window(self) -> None:
+        self.store.set_state("learning_started_local", (THURSDAY - timedelta(days=20)).isoformat())
+        other = "device-2"
+        self.store.set_device_status(other, True, datetime.now(timezone.utc).isoformat(), "{}")
+        old_day = THURSDAY - timedelta(days=100)
+        self.store.add_event(
+            {
+                "event_id": "old",
+                "device_id": other,
+                "event_type": "motion",
+                "occurred_at_utc": at(old_day, 6).astimezone(timezone.utc).isoformat(),
+                "occurred_at_local": at(old_day, 6).isoformat(),
+                "source": "test",
+                "raw_metadata": "{}",
+            }
+        )
+        self.store.add_event(
+            {
+                "event_id": "multi",
+                "device_id": other,
+                "event_type": "motion",
+                "occurred_at_utc": at(THURSDAY, 7, 30).astimezone(timezone.utc).isoformat(),
+                "occurred_at_local": at(THURSDAY, 7, 30).isoformat(),
+                "source": "test",
+                "raw_metadata": "{}",
+            }
+        )
+        result = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 12))
+        self.assertEqual(result["decision"], "normal")
+        self.assertEqual(result["first_activity"], "07:30")
+        self.assertEqual(result["samples"], 0)
+
+    def test_all_clear_reports_activity_without_claiming_person(self) -> None:
+        day = datetime.now(TZ).date()
+        local = datetime.combine(day, time(11, 35), tzinfo=TZ)
+        alert_created = (local - timedelta(minutes=40)).astimezone(timezone.utc).isoformat()
+        self.store.claim_alert_day(day.isoformat(), "care_alert", "late", alert_created)
+        self.store.mark_alert_sent(day.isoformat())
+        self.store.add_notice(f"silent-alert:{day.isoformat()}")  # the alert was about a silent morning
+        self.store.add_event(
+            {
+                "event_id": "after-alert",
+                "device_id": DEVICE,
+                "event_type": "doorbell",
+                "occurred_at_utc": local.astimezone(timezone.utc).isoformat(),
+                "occurred_at_local": local.isoformat(),
+                "source": "test",
+                "raw_metadata": "{}",
+            }
+        )
+        emails = []
+        first = deliver_all_clear(self.store, self.settings, day, lambda s, sub, b: emails.append(b))
+        second = deliver_all_clear(self.store, self.settings, day, lambda s, sub, b: emails.append(b))
+        self.assertEqual(first["delivery"], "sent")
+        self.assertEqual(second["delivery"], "suppressed")
+        self.assertIn("Activity was recorded at 11:35 (front door). This may be her or a visitor.", emails[0])
+        self.assertNotIn("seen", emails[0].lower())
+
+    def test_privacy_retention_and_delete_everything(self) -> None:
+        day = THURSDAY - timedelta(days=100)
+        self.store.add_event(
+            {
+                "event_id": "old",
+                "device_id": DEVICE,
+                "event_type": "motion",
+                "occurred_at_utc": at(day, 7).astimezone(timezone.utc).isoformat(),
+                "occurred_at_local": at(day, 7).isoformat(),
+                "source": "test",
+                "raw_metadata": "{}",
+            }
+        )
+        self.assertEqual(self.store.delete_old_events(THURSDAY.isoformat()), 1)
+        self.store.save_family([{"name": "A", "email": "a@example.test", "language": "en"}])
+        self.assertEqual(len(self.store.export_data()["family"]), 1)
+        self.store.delete_everything()
+        self.assertEqual(self.store.all_device_ids(), [])
+        self.assertEqual(self.store.family(), [])
+
+
+class ReviewRegressionTests(RhythmCase):
+    """Bugs found in review; each test failed before its fix."""
+
+    def outbox(self, fail_for: str = "", fail_subject: str = ""):
+        sent: list[tuple[str, str]] = []
+
+        def sender(settings, subject, body):
+            if fail_for and settings.alert_to == fail_for:
+                raise OSError("smtp reject")
+            if fail_subject and fail_subject in subject:
+                raise OSError("smtp down")
+            sent.append((settings.alert_to, subject))
+
+        return sent, sender
+
+    def test_all_clear_is_sent_after_silent_morning_then_late_activity(self) -> None:
+        self.seed_history(THURSDAY)
+        sent, sender = self.outbox()
+        run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 5), sync=False, sender=sender)
+        ingest_webhook(webhook("late", at(THURSDAY, 11, 35)), self.store, TZ)
+        summary = run_once(self.settings, self.store, DEVICE, at(THURSDAY, 11, 40), sync=False, sender=sender)
+        run_once(self.settings, self.store, DEVICE, at(THURSDAY, 11, 45), sync=False, sender=sender)
+        self.assertIn("Activity was recorded at 11:35", summary["all_clear"])
+        self.assertEqual(
+            [subject for _, subject in sent],
+            ["A gentle check-in: later than usual", "Activity was recorded after the morning alert"],
+        )
+
+    def test_no_all_clear_when_alert_was_triggered_by_the_late_activity_itself(self) -> None:
+        self.seed_history(THURSDAY)
+        ingest_webhook(webhook("late", at(THURSDAY, 10, 35)), self.store, TZ)
+        sent, sender = self.outbox()
+        run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 40), sync=False, sender=sender)
+        run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 45), sync=False, sender=sender)
+        self.assertEqual(len(sent), 1)
+
+    def test_broken_family_address_never_repeats_alert_to_the_others(self) -> None:
+        self.seed_history(THURSDAY)
+        self.store.save_family(
+            [
+                {"name": "Ana", "email": "ana@example.test", "language": "en"},
+                {"name": "Bob", "email": "bob@broken.test", "language": "en"},
+            ]
+        )
+        sent, sender = self.outbox(fail_for="bob@broken.test")
+        for minute in (5, 7, 9):
+            summary = run_once(
+                self.settings, self.store, DEVICE, at(THURSDAY, 10, minute), sync=False, sender=sender
+            )
+        self.assertEqual([to for to, _ in sent], ["ana@example.test"])
+        self.assertEqual(self.store.alert_status(THURSDAY.isoformat()), "sent")
+        self.assertIn(summary["delivery"], {"suppressed", "retried"})
+
+    def test_weekly_summary_is_retried_after_a_failure(self) -> None:
+        sunday = THURSDAY + timedelta(days=3)
+        self.seed_history(sunday)
+        _, failing = self.outbox(fail_subject="weekly summary")
+        first = run_once(self.settings, self.store, DEVICE, at(sunday, 18, 30), sync=False, sender=failing)
+        self.assertIn("weekly_summary", first)
+        sent, sender = self.outbox()
+        run_once(self.settings, self.store, DEVICE, at(sunday, 19, 0), sync=False, sender=sender)
+        run_once(self.settings, self.store, DEVICE, at(sunday, 19, 30), sync=False, sender=sender)
+        self.assertEqual([subject for _, subject in sent].count("Rhythm's weekly summary"), 1)
+
+    def test_usual_window_excludes_alert_days_and_uses_todays_bucket(self) -> None:
+        self.seed_history(THURSDAY)
+        late_day = THURSDAY - timedelta(days=1)
+        ingest_webhook(webhook("very-late", at(late_day, 7, 0)), self.store, TZ)  # earlier than usual
+        self.store.claim_alert_day(
+            late_day.isoformat(), "care_alert", "x", datetime.now(timezone.utc).isoformat()
+        )
+        self.store.mark_alert_sent(late_day.isoformat())
+        result = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 9))
+        self.assertEqual(result["usual_window"], ["08:00", "08:00"])  # weekday only, alert day left out
+
+    def test_timezone_change_is_applied_to_stored_events(self) -> None:
+        self.seed_history(THURSDAY)
+        ingest_webhook(webhook("today", at(THURSDAY, 8, 20)), self.store, TZ)
+        self.store.set_state("profile_timezone", "Europe/London")  # one hour behind Rome
+        from rhythm.profile import effective_settings
+
+        london = effective_settings(self.settings, self.store)
+        result = decide_for_day(self.store, london, DEVICE, THURSDAY, at(THURSDAY, 12))
+        self.assertEqual(result["first_activity"], "07:20")
+
+    def test_french_email_is_translated(self) -> None:
+        from rhythm.email_delivery import build_care_alert
+
+        result = {
+            "reason": "No activity had been seen by 10:00.",
+            "first_activity": "none",
+            "cutoff": "10:00",
+        }
+        subject, body = localize(*build_care_alert(result), "fr")
+        self.assertIn("plus tard que d'habitude", subject)
+        self.assertIn("Pourquoi Rhythm vous écrit", body)
+        self.assertIn("Aucune activité enregistrée avant 10:00.", body)
+
+    def test_sensitivity_changes_the_minimum_wait(self) -> None:
+        from rhythm.profile import effective_settings
+
+        self.store.set_state("profile_sensitivity", "Careful")
+        careful = effective_settings(self.settings, self.store)
+        self.store.set_state("profile_sensitivity", "Relaxed")
+        relaxed = effective_settings(self.settings, self.store)
+        self.assertEqual((careful.minimum_wait_weekday, careful.max_margin_minutes), (time(9, 30), 5))
+        self.assertEqual((relaxed.minimum_wait_weekday, relaxed.max_margin_minutes), (time(10, 30), 30))
 
 
 class AppTests(unittest.TestCase):
@@ -292,6 +581,19 @@ class AppTests(unittest.TestCase):
         digest = hmac.new(b"test-secret", raw, hashlib.sha256).hexdigest()
         return raw, {"X-Signature": f"sha256={digest}", "Content-Type": "application/json"}
 
+    def set_reply_secret_and_token(self, action: str, now: datetime | None = None) -> tuple[str, object]:
+        original = self.app_module.settings
+        self.app_module.settings = replace(original, reply_token_secret="email-link-test-secret")
+        token, _ = issue_reply_token(
+            self.app_module.store,
+            self.app_module.settings,
+            action,
+            self.app_module.household_today(),
+            "family@example.test",
+            now,
+        )
+        return token, original
+
     def test_dashboard_endpoint_works_from_a_worker_thread(self) -> None:
         response = self.client.get("/api/dashboard")
         self.assertEqual(response.status_code, 200)
@@ -299,7 +601,12 @@ class AppTests(unittest.TestCase):
 
     def test_webhook_rejects_bad_signature_and_accepts_good_one_once(self) -> None:
         raw, headers = self.signed(webhook("w1", at(THURSDAY, 8)))
-        self.assertEqual(self.client.post("/webhooks/ring", content=raw, headers={"X-Signature": "sha256=bad"}).status_code, 401)
+        self.assertEqual(
+            self.client.post(
+                "/webhooks/ring", content=raw, headers={"X-Signature": "sha256=bad"}
+            ).status_code,
+            401,
+        )
         self.assertEqual(self.client.post("/webhooks/ring", content=raw).status_code, 401)
         first = self.client.post("/webhooks/ring", content=raw, headers=headers)
         second = self.client.post("/webhooks/ring", content=raw, headers=headers)
@@ -309,23 +616,160 @@ class AppTests(unittest.TestCase):
     def test_reply_endpoints_validate_input(self) -> None:
         today = self.app_module.household_today()
         self.assertEqual(self.client.post("/api/reply/away", json={"until": "not-a-date"}).status_code, 422)
-        self.assertEqual(self.client.post("/api/reply/away", json={"until": (today - timedelta(days=1)).isoformat()}).status_code, 422)
+        self.assertEqual(
+            self.client.post(
+                "/api/reply/away", json={"until": (today - timedelta(days=1)).isoformat()}
+            ).status_code,
+            422,
+        )
         ok = self.client.post("/api/reply/away", json={"until": today.isoformat()})
         self.assertEqual(ok.status_code, 200)
+
+    def test_email_link_get_is_inert_and_post_is_one_use(self) -> None:
+        token, original = self.set_reply_secret_and_token("fine")
+        try:
+            opened = self.client.get(f"/reply/{token}")
+            self.assertEqual(opened.status_code, 200)
+            self.assertIn("Confirm she’s fine", opened.text)
+            self.assertIsNone(
+                self.app_module.store.latest_reply(self.app_module.household_today().isoformat())
+            )
+
+            confirmed = self.client.post(f"/reply/{token}")
+            self.assertEqual(confirmed.status_code, 200)
+            self.assertIsNotNone(
+                self.app_module.store.latest_reply(self.app_module.household_today().isoformat())
+            )
+            self.assertEqual(self.client.post(f"/reply/{token}").status_code, 410)
+        finally:
+            self.app_module.settings = original
+
+    def test_email_link_rejects_forged_and_expired_tokens(self) -> None:
+        token, original = self.set_reply_secret_and_token("fine")
+        try:
+            forged = token[:-1] + ("A" if token[-1] != "A" else "B")
+            self.assertEqual(self.client.get(f"/reply/{forged}").status_code, 400)
+            expired, _ = issue_reply_token(
+                self.app_module.store,
+                self.app_module.settings,
+                "fine",
+                self.app_module.household_today(),
+                "family@example.test",
+                datetime.now(timezone.utc) - timedelta(hours=25),
+            )
+            self.assertEqual(self.client.get(f"/reply/{expired}").status_code, 410)
+        finally:
+            self.app_module.settings = original
+
+    def test_away_email_link_requires_explicit_post_and_date(self) -> None:
+        token, original = self.set_reply_secret_and_token("away")
+        try:
+            opened = self.client.get(f"/reply/{token}")
+            self.assertEqual(opened.status_code, 200)
+            self.assertIn('type="date"', opened.text)
+            self.assertIsNone(
+                self.app_module.store.active_away_until(self.app_module.household_today().isoformat())
+            )
+            until = (self.app_module.household_today() + timedelta(days=3)).isoformat()
+            confirmed = self.client.post(f"/reply/{token}", data={"until": until})
+            self.assertEqual(confirmed.status_code, 200)
+            self.assertEqual(
+                self.app_module.store.active_away_until(self.app_module.household_today().isoformat()), until
+            )
+        finally:
+            self.app_module.settings = original
+
+    def test_fine_link_clicked_after_midnight_answers_the_alert_day(self) -> None:
+        original = self.app_module.settings
+        self.app_module.settings = replace(original, reply_token_secret="email-link-test-secret")
+        alert_day = self.app_module.household_today() - timedelta(days=1)
+        try:
+            token, _ = issue_reply_token(
+                self.app_module.store,
+                self.app_module.settings,
+                "fine",
+                alert_day,
+                "family@example.test",
+            )
+            self.assertEqual(self.client.post(f"/reply/{token}").status_code, 200)
+            self.assertIsNotNone(self.app_module.store.latest_reply(alert_day.isoformat()))
+        finally:
+            self.app_module.settings = original
+
+    def test_other_family_members_are_told_who_checked_in(self) -> None:
+        original = self.app_module.settings
+        self.app_module.settings = replace(original, reply_token_secret="email-link-test-secret")
+        self.app_module.store.save_family(
+            [
+                {"name": "Ana", "email": "ana@example.test", "language": "en"},
+                {"name": "Bob", "email": "bob@example.test", "language": "fr"},
+            ]
+        )
+        sent: list[tuple[str, str]] = []
+        try:
+            day = self.app_module.household_today() + timedelta(days=5)  # a day no other test touches
+            token, _ = issue_reply_token(
+                self.app_module.store, self.app_module.settings, "fine", day, "ana@example.test"
+            )
+            with patch(
+                "rhythm.app.send_smtp_email",
+                side_effect=lambda s, subj, body: sent.append((s.alert_to, body)),
+            ):
+                self.assertEqual(self.client.post(f"/reply/{token}").status_code, 200)
+            self.assertEqual(len(sent), 1)
+            self.assertEqual(sent[0][0], "bob@example.test")
+            self.assertIn("Ana", sent[0][1])
+        finally:
+            self.app_module.store.save_family([])
+            self.app_module.settings = original
 
     def test_admin_token_is_enforced_when_set(self) -> None:
         original = self.app_module.settings
         self.app_module.settings = replace(original, admin_token="s3cret")
         try:
             self.assertEqual(self.client.get("/api/dashboard").status_code, 401)
-            self.assertEqual(self.client.get("/api/dashboard", headers={"X-Admin-Token": "s3cret"}).status_code, 200)
+            self.assertEqual(
+                self.client.get("/api/dashboard", headers={"X-Admin-Token": "s3cret"}).status_code, 200
+            )
             self.assertEqual(self.client.post("/api/reply/fine").status_code, 401)
         finally:
             self.app_module.settings = original
 
+    def test_setup_saves_profile_and_family_recipients(self) -> None:
+        self.assertEqual(self.client.get("/setup").status_code, 200)
+        response = self.client.post(
+            "/setup",
+            data={
+                "household": "Demo Home",
+                "timezone": "Europe/Rome",
+                "members": "Marco,marco@example.test\nAnna,anna@example.test",
+                "language": "it",
+                "sensitivity": "Careful",
+            },
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.app_module.store.get_state("profile_household"), "Demo Home")
+        self.assertEqual(self.app_module.store.get_state("profile_sensitivity"), "Careful")
+        self.assertEqual(
+            [m["email"] for m in self.app_module.store.family()], ["anna@example.test", "marco@example.test"]
+        )
+        self.app_module.store.delete_everything()
+
     def test_dashboard_api_is_disabled_in_webhook_mode_without_a_token(self) -> None:
         original = self.app_module.settings
         self.app_module.settings = replace(original, ring_ingestion_mode="webhook", admin_token="")
+        try:
+            self.assertEqual(self.client.get("/api/dashboard").status_code, 403)
+            self.assertEqual(self.client.get("/health").status_code, 200)
+        finally:
+            self.app_module.settings = original
+
+        self.app_module.settings = replace(
+            original,
+            ring_ingestion_mode="poll",
+            admin_token="",
+            public_base_url="https://rhythm-demo.trycloudflare.com",
+        )
         try:
             self.assertEqual(self.client.get("/api/dashboard").status_code, 403)
             self.assertEqual(self.client.get("/health").status_code, 200)

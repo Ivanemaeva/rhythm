@@ -19,7 +19,9 @@ class RingApi:
         self.settings = settings
         self.store = store
 
-    def _get(self, client: httpx.Client, path_or_url: str, params: dict[str, str] | None = None) -> dict[str, Any]:
+    def _get(
+        self, client: httpx.Client, path_or_url: str, params: dict[str, str] | None = None
+    ) -> dict[str, Any]:
         if path_or_url.startswith("https://"):
             url = path_or_url
         else:
@@ -32,19 +34,38 @@ class RingApi:
         """Fetch device status and Event History once and store the metadata."""
         if not self.settings.ring_access_token:
             raise RuntimeError("Set RING_ACCESS_TOKEN before connecting to Ring.")
-        if not self.settings.ring_device_id:
-            raise RuntimeError("Set RING_DEVICE_ID before syncing Ring.")
-        device_id = self.settings.ring_device_id
         headers = {"Authorization": f"Bearer {self.settings.ring_access_token}", "Accept": "application/json"}
         try:
             with httpx.Client(headers=headers, timeout=20) as client:
-                status_body = self._get(client, f"/v1/devices/{device_id}/status")
-                data = status_body.get("data", status_body)
-                attrs = data.get("attributes", data)
-                online = attrs.get("online")
-                reported_at = attrs.get("reported_at") or status_body.get("meta", {}).get("time")
-                self.store.set_device_status(device_id, online, reported_at, json.dumps(status_body, sort_keys=True))
-                return self._sync_history(client, device_id, online)
+                try:
+                    body = self._get(client, "/v1/devices")
+                    ids = [str(d.get("id")) for d in body.get("data", []) if d.get("id")]
+                except httpx.HTTPStatusError:
+                    ids = []
+                if not ids and self.settings.ring_device_id:
+                    ids = [self.settings.ring_device_id]
+                if not ids:
+                    raise RuntimeError("Ring returned no devices. Check device access and token permissions.")
+                results = []
+                for device_id in ids:
+                    status_body = self._get(client, f"/v1/devices/{device_id}/status")
+                    data = status_body.get("data", status_body)
+                    attrs = data.get("attributes", data)
+                    online = attrs.get("online")
+                    reported_at = attrs.get("reported_at") or status_body.get("meta", {}).get("time")
+                    self.store.set_device_status(
+                        device_id,
+                        online,
+                        reported_at,
+                        json.dumps({"online": online, "reported_at": reported_at}),
+                    )
+                    results.append(self._sync_history(client, device_id, online))
+                return {
+                    "devices": len(ids),
+                    "online": any(x.get("online") is True for x in results),
+                    "events_added": sum(x.get("events_added", 0) for x in results),
+                    "history_available": all(x.get("history_available", True) for x in results),
+                }
         except httpx.HTTPStatusError as exc:
             if exc.response.status_code == 401:
                 raise RuntimeError(
@@ -68,11 +89,18 @@ class RingApi:
                 if code in {403, 404} and pages == 0:
                     # History permission can be unavailable independently of device status.
                     self._start_learning_today()
-                    return {"online": online, "events_added": 0, "history_pages": 0, "history_available": False}
+                    return {
+                        "online": online,
+                        "events_added": 0,
+                        "history_pages": 0,
+                        "history_available": False,
+                    }
                 raise
             pages += 1
             for item in body.get("data", []):
-                count += int(ingest_history_item(item, self.store, self.settings.household_timezone, device_id))
+                count += int(
+                    ingest_history_item(item, self.store, self.settings.household_timezone, device_id)
+                )
             url = body.get("links", {}).get("next")
             params = None  # links.next carries its own cursor and filters
         earliest = self.store.earliest_event_day(device_id)

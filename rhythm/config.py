@@ -4,6 +4,7 @@ import os
 from dataclasses import dataclass
 from datetime import time
 from pathlib import Path
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
@@ -41,6 +42,24 @@ def load_timezone(name: str) -> ZoneInfo:
         ) from exc
 
 
+def load_public_base_url(value: str) -> str:
+    """Validate the origin used in email links; permit plain HTTP only on localhost."""
+    normalized = value.strip().rstrip("/")
+    parsed = urlsplit(normalized)
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname or parsed.username or parsed.password:
+        raise ValueError("PUBLIC_BASE_URL must be an absolute http(s) URL without credentials.")
+    if parsed.path or parsed.query or parsed.fragment:
+        raise ValueError("PUBLIC_BASE_URL must be an origin only, such as http://127.0.0.1:8000.")
+    try:
+        parsed.port
+    except ValueError as exc:
+        raise ValueError("PUBLIC_BASE_URL contains an invalid port.") from exc
+    local_hosts = {"localhost", "127.0.0.1", "::1"}
+    if parsed.scheme != "https" and parsed.hostname not in local_hosts:
+        raise ValueError("PUBLIC_BASE_URL must use HTTPS except for localhost testing.")
+    return normalized
+
+
 @dataclass(frozen=True)
 class Settings:
     household_timezone: ZoneInfo
@@ -68,6 +87,9 @@ class Settings:
     # Optional shared secret protecting the dashboard API and reply endpoints.
     # Required whenever the app is reachable from outside this computer.
     admin_token: str = ""
+    public_base_url: str = "http://127.0.0.1:8000"
+    reply_token_secret: str = ""
+    baseline_days: int = 56
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -95,6 +117,9 @@ class Settings:
             alert_to=os.getenv("ALERT_TO", ""),
             smtp_use_starttls=os.getenv("SMTP_USE_STARTTLS", "true").lower() == "true",
             admin_token=os.getenv("RHYTHM_ADMIN_TOKEN", ""),
+            public_base_url=load_public_base_url(os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")),
+            reply_token_secret=os.getenv("REPLY_TOKEN_SECRET", ""),
+            baseline_days=max(1, int(os.getenv("BASELINE_DAYS", "56"))),
         )
 
     def bucket(self, weekday: int) -> str:

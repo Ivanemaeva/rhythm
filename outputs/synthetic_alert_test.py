@@ -69,7 +69,9 @@ def calculate_cutoffs(history: list[Day], floors: dict[str, time] = DEFAULT_FLOO
             cutoffs[bucket] = floor
         else:
             ordered = sorted(bucket_samples)
-            rank = max(0, min(len(ordered) - 1, -(-95 * len(ordered) // 100) - 1))  # 95th percentile, nearest rank
+            rank = max(
+                0, min(len(ordered) - 1, -(-95 * len(ordered) // 100) - 1)
+            )  # 95th percentile, nearest rank
             margin_cutoff = (datetime.combine(date.min, ordered[rank]) + MAX_MARGIN).time()
             cutoffs[bucket] = max(floor, margin_cutoff)
     return cutoffs
@@ -102,26 +104,38 @@ def main() -> None:
     assert len(normal_days) == 5, f"expected five normal evaluation days, got {len(normal_days)}"
 
     print("Scenario: 21 days generated in Europe/Rome local time (14 learning, 7 evaluation)")
-    print(f"Cutoffs (default floors): weekday {cutoffs['weekday'].strftime('%H:%M')}, weekend {cutoffs['weekend'].strftime('%H:%M')}")
+    print(
+        f"Cutoffs (default floors): weekday {cutoffs['weekday'].strftime('%H:%M')}, weekend {cutoffs['weekend'].strftime('%H:%M')}"
+    )
     print("Evaluation outcomes:")
     for day, outcome in outcomes:
         activity = day.first_activity.strftime("%H:%M %Z") if day.first_activity else "none"
         print(f"  {day.day.isoformat()} activity={activity:>12} -> {outcome}")
-    print("PASS 1: 0 care alerts on normal mornings; 1 on the late day; offline day uses the device_offline branch.")
+    print(
+        "PASS 1: 0 care alerts on normal mornings; 1 on the late day; offline day uses the device_offline branch."
+    )
 
     # Part 2: with low floors the learned history decides. Weekdays have 10 samples (>= 5);
     # weekends have only 4 in two weeks, so they still use the fixed fallback (the floor).
     low_floors = {"weekday": time(6, 0), "weekend": time(6, 0)}
     learned = calculate_cutoffs(history, low_floors)
-    latest_weekday = max(d.first_activity.timetz().replace(tzinfo=None) for d in history if d.bucket == "weekday")
+    latest_weekday = max(
+        d.first_activity.timetz().replace(tzinfo=None) for d in history if d.bucket == "weekday"
+    )
     expected = (datetime.combine(date.min, latest_weekday) + MAX_MARGIN).time()
     assert learned["weekday"] == expected, (learned["weekday"], expected)
-    assert learned["weekday"] < DEFAULT_FLOORS["weekday"], "learned cutoff should be earlier than the 10:00 floor"
+    assert (
+        learned["weekday"] < DEFAULT_FLOORS["weekday"]
+    ), "learned cutoff should be earlier than the 10:00 floor"
     assert learned["weekend"] == time(6, 0), "4 weekend samples is below the minimum, so the fallback applies"
-    nine_thirty = Day(date(2026, 9, 24), datetime.combine(date(2026, 9, 24), time(9, 30), tzinfo=HOUSEHOLD_TZ))
+    nine_thirty = Day(
+        date(2026, 9, 24), datetime.combine(date(2026, 9, 24), time(9, 30), tzinfo=HOUSEHOLD_TZ)
+    )
     assert evaluate(nine_thirty, learned) == "care_alert" and evaluate(nine_thirty, cutoffs) == "normal"
-    print(f"PASS 2: with low floors the learned weekday cutoff is {learned['weekday'].strftime('%H:%M')}; "
-          "a 09:30 morning alerts, while the 10:00 default floor would not. Weekends use the fallback (4 samples < 5).")
+    print(
+        f"PASS 2: with low floors the learned weekday cutoff is {learned['weekday'].strftime('%H:%M')}; "
+        "a 09:30 morning alerts, while the 10:00 default floor would not. Weekends use the fallback (4 samples < 5)."
+    )
 
 
 if __name__ == "__main__":

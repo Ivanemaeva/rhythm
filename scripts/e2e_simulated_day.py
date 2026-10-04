@@ -19,12 +19,27 @@ from rhythm.storage import Store
 
 def make_settings(database_path: Path) -> Settings:
     return Settings(
-        household_timezone=ZoneInfo("Europe/Rome"), learning_days=14, min_samples_per_bucket=5,
-        max_margin_minutes=15, minimum_wait_weekday=time(10), minimum_wait_weekend=time(11),
-        fallback_weekday=time(10), fallback_weekend=time(11),
-        ring_api_base_url="https://api.amazonvision.com", ring_access_token="", ring_device_id="demo-device",
-        ring_ingestion_mode="webhook", ring_poll_seconds=120, ring_webhook_secret="", database_path=database_path,
-        smtp_host="", smtp_port=587, smtp_username="", smtp_password="", smtp_from="", alert_to="",
+        household_timezone=ZoneInfo("Europe/Rome"),
+        learning_days=14,
+        min_samples_per_bucket=5,
+        max_margin_minutes=15,
+        minimum_wait_weekday=time(10),
+        minimum_wait_weekend=time(11),
+        fallback_weekday=time(10),
+        fallback_weekend=time(11),
+        ring_api_base_url="https://api.amazonvision.com",
+        ring_access_token="",
+        ring_device_id="demo-device",
+        ring_ingestion_mode="webhook",
+        ring_poll_seconds=120,
+        ring_webhook_secret="",
+        database_path=database_path,
+        smtp_host="",
+        smtp_port=587,
+        smtp_username="",
+        smtp_password="",
+        smtp_from="",
+        alert_to="",
         smtp_use_starttls=True,
     )
 
@@ -48,7 +63,9 @@ def main() -> None:
         store = Store(Path(temp_dir) / "rhythm.sqlite3")
         settings = make_settings(Path(temp_dir) / "rhythm.sqlite3")
         store.set_state_once("learning_started_local", (target_day - timedelta(days=14)).isoformat())
-        store.set_device_status("demo-device", True, datetime.now(timezone.utc).isoformat(), '{"online": true}')
+        store.set_device_status(
+            "demo-device", True, datetime.now(timezone.utc).isoformat(), '{"online": true}'
+        )
 
         # Feed 14 days of ordinary history using the same ingestion path as webhooks.
         for offset in range(14, 0, -1):

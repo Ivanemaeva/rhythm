@@ -1,8 +1,10 @@
-# Bundle contents (v2)
+# Rhythm bundle contents
 
-- `rhythm/`, `scripts/`, `tests/`, `outputs/`: application code, dashboard, scheduled job, replay, automated tests and the logic scenario.
-- `.env.example`, `requirements.txt`, `.gitignore`, `LICENSE` (MIT): configuration template, dependencies, ignore rules and license. No credentials are included.
-- `README.md`: the project README (judge-facing).
-- `docs/`: demo video plan, Devpost text, product feedback, friction log, feature requests, links, test results and submission checklist.
+- `rhythm/`: app, SQLite storage, Ring API client, rules, email, templates, and `python -m rhythm` launcher.
+- `scripts/`: polling, scheduled checks, replay, device listing, and synthetic end-to-end/demo scripts.
+- `tests/`: 42 local tests using synthetic events, mocked Ring calls, and fake senders.
+- `outputs/`: synthetic logic test and original demo artifact.
+- `docs/`: demo plan, Devpost draft, product feedback, feature status, hardware-validation checklist, links, and submission notes.
+- `.env.example`, `requirements.txt`, `LICENSE`, `README.md`.
 
-The generated SQLite database, `.env`, Ring tokens and SMTP credentials are excluded. This folder is not yet a GitHub repository.
+No real tokens, `.env`, local SQLite database, installed dependencies, or `.test-deps` folder are included. `docs/revised_features.md` lists the implementation status and the physical-device validation still needed.

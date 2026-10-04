@@ -23,9 +23,13 @@ from rhythm.rules import decide_for_day
 from rhythm.storage import Store
 
 
-def settings_for(database_path: Path) -> Settings:
+def settings_for(database_path: Path, dry_run: bool = False) -> Settings:
     settings = Settings.from_env()
-    return Settings(**{**settings.__dict__, "database_path": database_path})
+    values = {**settings.__dict__, "database_path": database_path}
+    if dry_run:
+        values["reply_token_secret"] = values["reply_token_secret"] or "local-dry-run-reply-secret"
+        values["alert_to"] = values["alert_to"] or "dry-run@example.invalid"
+    return Settings(**values)
 
 
 def make_webhook(event_id: str, when: datetime) -> dict:
@@ -49,16 +53,21 @@ def main() -> None:
     target_day = datetime.now(household_tz).date()
     with TemporaryDirectory() as temp:
         database = Path(temp) / "rhythm.sqlite3"
-        settings = settings_for(database)
+        settings = settings_for(database, dry_run=args.dry_run)
         store = Store(database)
         store.set_state_once("learning_started_local", (target_day - timedelta(days=14)).isoformat())
-        store.set_device_status("email-demo-device", True, datetime.now(timezone.utc).isoformat(), '{"online": true}')
+        store.set_device_status(
+            "email-demo-device", True, datetime.now(timezone.utc).isoformat(), '{"online": true}'
+        )
 
         for offset in range(14, 0, -1):
             prior_day = target_day - timedelta(days=offset)
             usual = time(9) if prior_day.weekday() >= 5 else time(8)
             ingest_webhook(
-                make_webhook(f"history-{prior_day.isoformat()}", datetime.combine(prior_day, usual, tzinfo=household_tz)),
+                make_webhook(
+                    f"history-{prior_day.isoformat()}",
+                    datetime.combine(prior_day, usual, tzinfo=household_tz),
+                ),
                 store,
                 household_tz,
             )
@@ -75,6 +84,7 @@ def main() -> None:
                 print("Email body includes reason:", "Why Rhythm spoke up:" in body)
                 return
             from rhythm.email_delivery import send_smtp_email
+
             send_smtp_email(
                 current_settings,
                 "[SIMULATED TEST] " + subject,

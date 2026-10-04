@@ -20,7 +20,7 @@ pip install -r requirements.txt
 $env:DATABASE_PATH = "data/rhythm-video-demo.sqlite3"
 python scripts/replay_demo.py --delay-seconds 0.15 --reset-demo --send-email
 python scripts/poll_ring.py --once        # run AFTER the replay: it stores the real device status
-uvicorn rhythm.app:app
+python -m rhythm
 ```
 
 Open http://127.0.0.1:8000/. Configure `SMTP_*` and `ALERT_TO` first so the email shot is real; otherwise drop `--send-email` and say the alert is recorded without sending. Do not claim live Ring motion events. Upload as public YouTube or Vimeo and test the link while signed out.

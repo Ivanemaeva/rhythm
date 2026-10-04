@@ -6,9 +6,11 @@
   <title>Rhythm · Morning check-in</title>
   <style>
     :root { color-scheme: light; --ink:#19302d; --muted:#71817b; --line:#dce5df; --paper:#f6f7f2; --card:#fff; --green:#2d7665; --green-soft:#e8f3ed; --amber:#b77a25; --red:#a94e42; }
+    [data-theme="dark"] { color-scheme:dark; --ink:#edf4ef; --muted:#b2c0b8; --line:#394a43; --paper:#18211d; --card:#222e28; --green:#77c8ae; --green-soft:#29483d; --amber:#efbd64; --red:#f08e80; }
+    [data-theme="contrast"] { color-scheme:light; --ink:#000; --muted:#111; --line:#000; --paper:#fff; --card:#fff; --green:#000; --green-soft:#fff; --amber:#000; --red:#000; }
     * { box-sizing:border-box; }
     body { margin:0; background:var(--paper); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
-    header { display:flex; justify-content:space-between; align-items:center; gap:20px; padding:22px max(24px,calc((100vw - 1180px)/2)); background:#fff; border-bottom:1px solid var(--line); }
+    header { display:flex; justify-content:space-between; align-items:center; gap:20px; padding:22px max(24px,calc((100vw - 1180px)/2)); background:var(--card); border-bottom:1px solid var(--line); }
     .brand { display:flex; align-items:center; gap:12px; font-weight:750; letter-spacing:.02em; font-size:20px; }
     .mark { width:34px; height:34px; display:grid; place-items:center; border-radius:50%; background:var(--green-soft); color:var(--green); }
     .tagline { color:var(--muted); font-size:13px; }
@@ -52,14 +54,15 @@
     input[type=date] { border:1px solid var(--line); border-radius:8px; padding:9px 10px; font:14px system-ui,sans-serif; color:var(--ink); }
     #reply-message { min-height:22px; margin:10px 0 0; color:var(--green); font-size:13px; }
     .footer { margin-top:20px; color:var(--muted); font-size:12px; }
+    [data-theme="contrast"] body { font-size:18px; } [data-theme="contrast"] button { outline:3px solid #000; }
     @media (max-width:850px) { .state-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } .layout { grid-template-columns:1fr; } }
     @media (max-width:520px) { header { align-items:flex-start; flex-direction:column; } main { margin-top:24px; padding:0 15px; } .state-grid { gap:8px; } .stat { padding:13px; min-height:92px; } .value { font-size:17px; } .panel { padding:15px; } }
   </style>
 </head>
 <body>
   <header>
-    <div class="brand"><span class="mark" aria-hidden="true">◔</span><span>Rhythm</span></div>
-    <div class="tagline">A gentle morning check-in · <span id="timezone">—</span></div>
+    <div class="brand"><span class="mark" aria-hidden="true">◔</span><span>Rhythm</span><span id="household-name"></span></div>
+    <div class="tagline">A gentle morning check-in · <span id="timezone">—</span> · <a href="/setup">Setup</a> · <label>Display <select id="theme" aria-label="Display mode"><option value="light">Light</option><option value="dark">Dark</option><option value="contrast">High contrast</option></select></label></div>
   </header>
   <main>
     <h1>Morning routine</h1>
@@ -73,9 +76,10 @@
     </section>
 
     <section class="layout">
+      <article class="card panel" style="grid-column:1/-1"><div class="panel-head"><div><h2>Today’s status</h2><p class="sub" id="live-status">Loading the household status…</p></div><div><strong>Usual window:</strong> <span id="usual-window">—</span> · <strong>Cutoff:</strong> <span id="cutoff">—</span></div></div><p id="live-reason" class="sub"></p></article>
       <article class="card panel">
         <div class="panel-head">
-          <div><h2>First activity by day</h2><p class="sub">Three weeks of routine + today · local time · earliest motion or doorbell event</p></div>
+          <div><h2>First activity by day</h2><p class="sub">Rolling eight weeks · local time · earliest motion or doorbell event</p></div>
           <div class="legend"><span><i class="dot"></i>Weekday</span><span><i class="dot weekend"></i>Weekend</span><span><i class="dot alert-day"></i>Alert day</span></div>
         </div>
         <div class="chart-wrap"><svg id="routine-chart" viewBox="0 0 900 300" role="img" aria-label="Chart of first activity times by day"></svg></div>
@@ -91,6 +95,7 @@
       <h2>Family reply</h2>
       <p class="sub">These local demo actions are saved with this household’s Rhythm data.</p>
       <div class="reply-actions">
+        <label for="reply-member" class="sub">Replying as</label><select id="reply-member"><option value="">Choose family member</option></select>
         <button id="fine-button" type="button">She’s fine</button>
         <label for="away-until" class="sub">Away through</label>
         <input id="away-until" type="date">
@@ -99,14 +104,17 @@
       <p id="reply-message" role="status" aria-live="polite"></p>
     </section>
 
+    <section class="reply-panel"><a href="/api/export">Export my data</a> · <button id="delete-data" class="secondary">Delete everything</button><p class="sub" id="privacy-status"></p><p id="responders" class="sub"></p></section>
     <p class="footer">Rhythm is a check-in aid, not a safety or medical device.</p>
   </main>
   <script>
     const svgNS = 'http://www.w3.org/2000/svg';
     const colors = { ink:'#19302d', muted:'#82908a', grid:'#e7ede8', weekday:'#2d7665', weekend:'#b77a25' };
     const el = id => document.getElementById(id);
+    const savedTheme=localStorage.getItem('rhythm-theme'); const initialTheme=savedTheme|| (matchMedia('(prefers-contrast: more)').matches?'contrast':matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'); document.documentElement.dataset.theme=initialTheme; el('theme').value=initialTheme; el('theme').addEventListener('change',()=>{document.documentElement.dataset.theme=el('theme').value;localStorage.setItem('rhythm-theme',el('theme').value)});
     // Optional admin token: open the page as /?token=YOUR_TOKEN when RHYTHM_ADMIN_TOKEN is set.
     const adminToken = new URLSearchParams(location.search).get('token') || '';
+    document.querySelector('a[href="/setup"]').href='/setup'+(adminToken?'?token='+encodeURIComponent(adminToken):'');
     const authHeaders = (extra = {}) => adminToken ? { ...extra, 'X-Admin-Token': adminToken } : extra;
     function svg(tag, attrs = {}) {
       const node = document.createElementNS(svgNS, tag);
@@ -121,6 +129,10 @@
       const width = 900, height = 300, left = 58, right = 18, top = 16, bottom = 38;
       const minMinute = 6 * 60, maxMinute = 14 * 60;
       const plotWidth = width-left-right, plotHeight = height-top-bottom;
+      const usual=window.rhythmUsual||[]; const mins=usual.map(x=>{const [h,m]=x.split(':').map(Number);return h*60+m}).filter(x=>Number.isFinite(x));
+      const py=m=>top+(maxMinute-m)/(maxMinute-minMinute)*plotHeight;
+      if(mins.length){const lo=Math.min(...mins),hi=Math.max(...mins);chart.append(svg('rect',{x:left,y:py(hi),width:plotWidth,height:Math.max(2,py(lo)-py(hi)),fill:'#72b99a',opacity:'.17'}));}
+      const cutoffText=el('cutoff').textContent; if(/^\d\d:\d\d$/.test(cutoffText)){const [h,m]=cutoffText.split(':').map(Number), y=py(h*60+m);chart.append(svg('line',{x1:left,y1:y,x2:width-right,y2:y,stroke:'#a94e42','stroke-width':2,'stroke-dasharray':'6 4'}));}
       for (let hour=6; hour<=14; hour+=2) {
         const y = top + (maxMinute-hour*60)/(maxMinute-minMinute)*plotHeight;
         chart.append(svg('line', {x1:left,y1:y,x2:width-right,y2:y,stroke:colors.grid,'stroke-width':1}));
@@ -141,6 +153,10 @@
     }
     function paint(data) {
       el('timezone').textContent=data.timezone;
+      el('household-name').textContent=data.household?`· ${data.household}`:'';
+      el('usual-window').textContent=data.usual_window?.[0]?`${data.usual_window[0]}–${data.usual_window[1]} (${data.usual_bucket}s)`:'not enough observations yet'; el('cutoff').textContent=data.cutoff||'—'; window.rhythmUsual=data.usual_window||[];
+      el('live-status').textContent=data.decision==='pending'?`Waiting: nothing recorded yet; Rhythm will speak up after ${data.cutoff}.`:data.decision==='normal'?'Activity recorded within the usual window.':data.decision==='care_alert'?'Later than usual; a care alert was triggered.':data.decision==='device_offline'?'Device offline; no care alert.':'Current status: '+data.decision;
+      el('live-reason').textContent=data.live_reason||'';
       el('today').textContent=data.state.today;
       el('mode').textContent=data.state.mode==='learning'?'Learning':'Active';
       el('learning-detail').textContent=data.state.mode==='learning'?`Quiet learning started ${data.state.learning_started}; active ${data.state.active_on}.`:`Learned routine since ${data.state.learning_started}.`;
@@ -161,6 +177,8 @@
         }
       }
       if (!el('away-until').value) el('away-until').min=data.state.today;
+      const member=el('reply-member'), selected=member.value; member.replaceChildren(new Option('Choose family member','')); for(const m of (data.family||[]))member.add(new Option(m.name?`${m.name} (${m.email})`:m.email,m.email)); if(selected)member.value=selected;
+      el('responders').textContent=data.responders?.length?'Recent replies: '+data.responders.map(r=>`${r.recipient||'Family'} · ${r.action} · ${r.created_at_utc}`).join(' | '):'';
     }
     async function refresh() {
       const response=await fetch('/api/dashboard',{headers:authHeaders()});
@@ -174,13 +192,17 @@
       el('reply-message').textContent=data.message;
       await refresh();
     }
-    el('fine-button').addEventListener('click',()=>reply('/api/reply/fine').catch(e=>el('reply-message').textContent=e.message));
+    el('fine-button').addEventListener('click',()=>{const recipient=el('reply-member').value;if(!recipient){el('reply-message').textContent='Choose who is replying.';return}reply('/api/reply/fine',{recipient}).catch(e=>el('reply-message').textContent=e.message)});
     el('away-button').addEventListener('click',()=>{
       const until=el('away-until').value;
       if (!until) { el('reply-message').textContent='Choose the date to pause through.'; return; }
-      reply('/api/reply/away',{until}).catch(e=>el('reply-message').textContent=e.message);
+      const recipient=el('reply-member').value;if(!recipient){el('reply-message').textContent='Choose who is replying.';return}
+      reply('/api/reply/away',{until,recipient}).catch(e=>el('reply-message').textContent=e.message);
     });
+    el('delete-data').addEventListener('click',async()=>{if(!confirm('Delete all Rhythm household data? This cannot be undone.'))return;const r=await fetch('/api/delete-everything',{method:'POST',headers:authHeaders()});el('privacy-status').textContent=r.ok?'All stored household data deleted.':'Could not delete data.';if(r.ok)await refresh()});
+    document.querySelector('a[href="/api/export"]').addEventListener('click',async e=>{e.preventDefault();const r=await fetch('/api/export',{headers:authHeaders()});if(!r.ok){el('privacy-status').textContent='Could not export data.';return}const blob=await r.blob(),a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download='rhythm-export.json';a.click();URL.revokeObjectURL(a.href)});
     refresh().catch(e=>{ el('mode').textContent='Unavailable'; el('reply-message').textContent=e.message; });
+    setInterval(()=>refresh().catch(()=>{}),30000);
   </script>
 </body>
 </html>

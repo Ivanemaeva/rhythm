@@ -22,7 +22,9 @@ from rhythm.storage import Store
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     parser.add_argument("--once", action="store_true", help="sync once and exit")
     args = parser.parse_args()
 
