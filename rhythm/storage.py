@@ -294,8 +294,11 @@ class Store:
     def clear_demo_replay(self) -> None:
         """Remove only data created by scripts/replay_demo.py."""
         with self._lock:
+            # The replay refuses to run on a database with real events, so all alert state here is demo state.
             self.connection.execute("DELETE FROM events WHERE source = 'demo_replay'")
-            self.connection.execute("DELETE FROM alerts WHERE status = 'demo'")
+            self.connection.execute("DELETE FROM alerts")
+            self.connection.execute("DELETE FROM notices")
+            self.connection.execute("DELETE FROM reply_tokens")
             self.connection.execute("DELETE FROM user_replies")
             self.connection.execute("DELETE FROM settings_state WHERE key = 'learning_started_local'")
             self.connection.commit()
@@ -398,8 +401,8 @@ class Store:
     def active_away_until(self, local_day: str) -> str | None:
         row = self._fetchone(
             """SELECT MAX(away_until_local) AS until_day FROM user_replies
-            WHERE action = 'away' AND away_until_local >= ?""",
-            (local_day,),
+            WHERE action = 'away' AND local_day <= ? AND away_until_local >= ?""",
+            (local_day, local_day),
         )
         return None if row is None else row["until_day"]
 

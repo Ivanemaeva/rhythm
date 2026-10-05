@@ -20,8 +20,6 @@ from .storage import Store
 
 # Device-offline and lost-connection messages are only sent from this local time on, so a night-time blip stays quiet.
 OFFLINE_NOTICE_AFTER = time(8, 0)
-# Event metadata older than this is deleted automatically (privacy retention).
-RETENTION_DAYS = 90
 
 
 def run_once(
@@ -76,5 +74,6 @@ def run_once(
     except Exception as exc:
         summary["weekly_summary"] = f"failed: {exc}"
 
-    store.delete_old_events((today - timedelta(days=RETENTION_DAYS)).isoformat())
+    # Privacy retention: raw event times are kept only as long as the learning window needs them.
+    store.delete_old_events((today - timedelta(days=settings.baseline_days)).isoformat())
     return summary

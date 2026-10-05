@@ -93,6 +93,7 @@ def setup_page() -> HTMLResponse:
         )
     )
     timezone_name = profile["timezone"] or settings.household_timezone.key
+    consent_checked = " checked" if store.get_state("profile_consent_date") else ""
     return HTMLResponse(f"""<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1"><title>Rhythm setup</title>
 <style>{SETUP_STYLE}</style>
@@ -104,6 +105,8 @@ def setup_page() -> HTMLResponse:
     <textarea name="members" rows="4">{escape(members)}</textarea></label>
   <label>Email language<select name="language">{languages}</select></label>
   <label>Sensitivity<select name="sensitivity">{sensitivities}</select></label>
+  <label style="display:flex;gap:10px;align-items:flex-start"><input type="checkbox" name="consent" value="yes" required style="width:auto;margin-top:6px"{consent_checked}>
+    <span>She knows Rhythm is running, has seen what it uses (activity times and device status only, never video or images), and agreed to it. She can ask to pause or stop it at any time.</span></label>
   <button>Save settings</button>
 </form>
 <p>SMTP passwords, Ring tokens and signing secrets stay in the .env file.</p>
@@ -138,6 +141,12 @@ async def save_setup(request: Request) -> HTMLResponse:
         members.append({"name": pair[0].strip(), "email": pair[1].strip(), "language": val("language")})
     if len(members) > 3:
         raise HTTPException(status_code=422, detail="Use at most three family recipients.")
+    if val("consent") != "yes":
+        raise HTTPException(
+            status_code=422,
+            detail="Rhythm is only set up with her knowledge and agreement. Please confirm consent.",
+        )
+    store.set_state_once("profile_consent_date", datetime.now(tz).date().isoformat())
     for k, v in {
         "household": val("household"),
         "timezone": tz.key,
@@ -234,6 +243,8 @@ def dashboard_data() -> dict[str, object]:
         "usual_window": usual_window(learned),
         "usual_bucket": live_settings.bucket(today.weekday()),
         "household": store.get_state("profile_household") or "",
+        "consent_date": store.get_state("profile_consent_date"),
+        "retention_days": live_settings.baseline_days,
         "responders": responders,
         "family_count": len(members),
         "family": members,

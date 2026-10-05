@@ -73,15 +73,24 @@ def _html_email_body(body: str) -> str:
     )
 
 
-def build_care_alert(result: dict[str, str | int], urls: dict[str, str] | None = None) -> tuple[str, str]:
-    """Return (subject, plain-text body) for a care alert decision, including the human reason."""
+def build_care_alert(
+    result: dict[str, object], urls: dict[str, str] | None = None, device_online: bool | None = None
+) -> tuple[str, str]:
+    """Return (subject, plain-text body) for a care alert: what happened, what is usual, why, what to do."""
     reason = str(result["reason"])
     first_activity = str(result.get("first_activity", "none"))
-    cutoff = str(result.get("cutoff", "the usual time"))
     if first_activity == "none":
-        headline = f"Rhythm has not seen any activity at the front door yet today, and her usual first activity is before {cutoff}."
+        headline = "Rhythm has not recorded any morning activity yet today."
     else:
         headline = f"Rhythm saw the first activity today at {first_activity} local time, later than usual."
+    context_lines = []
+    window = result.get("usual_window")
+    if window:
+        days = "weekdays" if result.get("bucket") == "weekday" else "weekends"
+        context_lines.append(f"Her usual first activity on {days} is between {window[0]} and {window[1]}.")
+    if device_online is True:
+        context_lines.append("The Ring device is online, so this is not a connection problem.")
+    context = ("\n".join(context_lines) + "\n\n") if context_lines else ""
     reply_section = ""
     if urls:
         reply_section = (
@@ -93,6 +102,7 @@ def build_care_alert(result: dict[str, str | int], urls: dict[str, str] | None =
     body = (
         "A gentle check-in from Rhythm\n\n"
         f"{headline}\n\n"
+        f"{context}"
         f"Why Rhythm spoke up: {reason}\n\n"
         f"{DOORBELL_NOTE} When you have a moment, please check in with her.\n\n"
         f"{reply_section}"
@@ -164,7 +174,9 @@ def deliver_care_alert(
             # the email is still sent, just without the buttons.
             if settings.reply_token_secret:
                 urls, nonces = email_reply_urls(store, recipient_settings, target_day)
-            subject, body = localize(*build_care_alert(result, urls), member.get("language", "en"))
+            subject, body = localize(
+                *build_care_alert(result, urls, store.home_online()), member.get("language", "en")
+            )
             sender(recipient_settings, subject, body)
             store.add_notice(_notice_key("care", local_day, member["email"]))
             newly_sent += 1
@@ -187,6 +199,10 @@ def deliver_care_alert(
 
 TRANSLATIONS = {
     "it": {
+        "Activity was recorded after the morning alert": "Attività registrata dopo l'avviso del mattino",
+        "Rhythm has not recorded any morning activity yet today.": "Oggi Rhythm non ha ancora registrato alcuna attività mattutina.",
+        "The Ring device is online, so this is not a connection problem.": "Il dispositivo Ring è online, quindi non si tratta di un problema di connessione.",
+        "If you haven't reached her yet, a quick call is still a good idea.": "Se non l'hai ancora sentita, una breve chiamata è comunque una buona idea.",
         "A gentle check-in: later than usual": "Un piccolo controllo: più tardi del solito",
         "A gentle check-in from Rhythm": "Un piccolo controllo da Rhythm",
         "A gentle check-in": "Un piccolo controllo",
@@ -203,6 +219,10 @@ TRANSLATIONS = {
         "This week looked like a normal week.": "Questa settimana è sembrata nella norma.",
     },
     "fr": {
+        "Activity was recorded after the morning alert": "Activité enregistrée après l'alerte du matin",
+        "Rhythm has not recorded any morning activity yet today.": "Rhythm n'a encore enregistré aucune activité ce matin.",
+        "The Ring device is online, so this is not a connection problem.": "L'appareil Ring est en ligne : il ne s'agit donc pas d'un problème de connexion.",
+        "If you haven't reached her yet, a quick call is still a good idea.": "Si vous ne l'avez pas encore jointe, un petit appel reste une bonne idée.",
         "A gentle check-in: later than usual": "Petit message de Rhythm : plus tard que d'habitude",
         "A gentle check-in from Rhythm": "Un petit message de Rhythm",
         "A gentle check-in": "Un petit message",
@@ -289,6 +309,22 @@ def localize(subject: str, body: str, language: str) -> tuple[str, str]:
                     f"È stata registrata attività in {m[1]} giorni su 7."
                     if language == "it"
                     else f"Une activité a été enregistrée {m[1]} jours sur les 7 derniers."
+                ),
+            ),
+            (
+                r"Activity was recorded at ([\d:]+) \(motion on a Ring device\)\.",
+                lambda m: (
+                    f"È stata registrata attività alle {m[1]} (movimento rilevato da un dispositivo Ring)."
+                    if language == "it"
+                    else f"Une activité a été enregistrée à {m[1]} (mouvement détecté par un appareil Ring)."
+                ),
+            ),
+            (
+                r"Her usual first activity on (weekdays|weekends) is between ([\d:]+) and ([\d:]+)\.",
+                lambda m: (
+                    f"Di solito la sua prima attività {'nei giorni feriali' if m[1] == 'weekdays' else 'nel fine settimana'} è tra le {m[2]} e le {m[3]}."
+                    if language == "it"
+                    else f"D'habitude, sa première activité {'en semaine' if m[1] == 'weekdays' else 'le week-end'} a lieu entre {m[2]} et {m[3]}."
                 ),
             ),
             (

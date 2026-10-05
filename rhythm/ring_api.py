@@ -15,9 +15,11 @@ from .storage import Store
 class RingApi:
     """Metadata-only Ring client: device status and Event History. It never calls Media endpoints."""
 
-    def __init__(self, settings: Settings, store: Store):
+    def __init__(self, settings: Settings, store: Store, verbose: bool = False):
         self.settings = settings
         self.store = store
+        # verbose prints each request and a short preview of Ring's answer (never the token).
+        self.verbose = verbose
 
     def _get(
         self, client: httpx.Client, path_or_url: str, params: dict[str, str] | None = None
@@ -27,6 +29,12 @@ class RingApi:
         else:
             url = urljoin(self.settings.ring_api_base_url + "/", path_or_url.lstrip("/"))
         response = client.get(url, params=params)
+        if self.verbose:
+            shown = url + (f"?{'&'.join(f'{k}={v}' for k, v in params.items())}" if params else "")
+            print(f"-> GET {shown}")
+            print(
+                f"<- {response.status_code} {response.text[:400]}{' …' if len(response.text) > 400 else ''}"
+            )
         response.raise_for_status()
         return response.json()
 

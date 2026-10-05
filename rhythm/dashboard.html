@@ -104,6 +104,17 @@
       <p id="reply-message" role="status" aria-live="polite"></p>
     </section>
 
+    <section class="card panel" aria-labelledby="privacy-title" style="margin-top:16px">
+      <h2 id="privacy-title">What Rhythm sees, and what it never sees</h2>
+      <div class="layout" style="margin-top:10px">
+        <div><p class="sub"><strong>Rhythm receives only:</strong></p>
+          <ul class="sub"><li>the time of each motion event</li><li>the time of each doorbell press (stored, never counted as her activity)</li><li>whether each Ring device is online</li><li>the timezone and family emails you set</li></ul></div>
+        <div><p class="sub"><strong>Rhythm never sees or keeps:</strong></p>
+          <ul class="sub"><li>video, images or sound</li><li>faces, or who moved</li><li>where in the home she is</li><li>anything older than <span id="retention-days">56</span> days (deleted automatically)</li></ul></div>
+      </div>
+      <p class="sub" id="consent-status"></p>
+    </section>
+
     <section class="reply-panel"><a href="/api/export">Export my data</a> · <button id="delete-data" class="secondary">Delete everything</button><p class="sub" id="privacy-status"></p><p id="responders" class="sub"></p></section>
     <p class="footer">Rhythm is a check-in aid, not a safety or medical device.</p>
   </main>
@@ -154,6 +165,7 @@
     function paint(data) {
       el('timezone').textContent=data.timezone;
       el('household-name').textContent=data.household?`· ${data.household}`:'';
+      el('retention-days').textContent=data.retention_days||56; el('consent-status').textContent=data.consent_date?`Consent recorded on ${data.consent_date}. She can ask to pause (away mode) or stop Rhythm (Delete everything) at any time.`:'Consent not recorded yet: open Setup and confirm she knows and agrees.';
       el('usual-window').textContent=data.usual_window?.[0]?`${data.usual_window[0]}–${data.usual_window[1]} (${data.usual_bucket}s)`:'not enough observations yet'; el('cutoff').textContent=data.cutoff||'—'; window.rhythmUsual=data.usual_window||[];
       el('live-status').textContent=data.decision==='pending'?`Waiting: nothing recorded yet; Rhythm will speak up after ${data.cutoff} (plus a short grace period).`:data.decision==='normal'?'Activity recorded within the usual window.':data.decision==='care_alert'?'Later than usual; a care alert was triggered.':data.decision==='device_offline'?'Device offline; no care alert.':data.decision==='connection_lost'?'Connection to Ring lost; no care alert. Renew the Ring token or check the internet.':data.decision==='learning'?'Learning her routine; no alerts yet.':data.decision==='suppressed_fine'?'Family marked her fine today.':data.decision==='paused_away'?'Away mode: alerts paused.':'Current status: '+data.decision;
       el('live-reason').textContent=data.live_reason||'';

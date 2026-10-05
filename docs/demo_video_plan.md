@@ -5,7 +5,7 @@ Keep a small on-screen label "Simulated Ring metadata" during replay and dashboa
 | Time | Shot and narration |
 |---|---|
 | 0:00-0:15 | Person at home looking at a phone. "A relative of mine lives alone. I want to know when her usual morning changes, without an alert for every little thing." |
-| 0:15-0:35 | Terminal: `python scripts/poll_ring.py --once` printing `online: True`. "Rhythm calls the real Ring API. Here it is reading device status from the Ring Developer Playground. Metadata only: no video, no images." |
+| 0:15-0:35 | Terminal: `python scripts/poll_ring.py --once --verbose` printing `online: True`. "Rhythm calls the real Ring API. Here it is reading device status from the Ring Developer Playground. Metadata only: no video, no images." |
 | 0:35-0:55 | Terminal: replay advancing day by day. "With no real device, I replay three simulated weeks. Rhythm learns the first-activity time and keeps weekdays and weekends separate." |
 | 0:55-1:15 | Dashboard chart. "Three quiet weeks of a familiar routine, with a little variation." |
 | 1:15-1:40 | Replay reaches the last day: pending, then `care_alert`. "Today nothing has been seen by the usual cutoff. Rhythm speaks up once, and a second attempt is suppressed." |
@@ -19,7 +19,7 @@ Keep a small on-screen label "Simulated Ring metadata" during replay and dashboa
 pip install -r requirements.txt
 $env:DATABASE_PATH = "data/rhythm-video-demo.sqlite3"
 python scripts/replay_demo.py --delay-seconds 0.15 --reset-demo --send-email
-python scripts/poll_ring.py --once        # run AFTER the replay: it stores the real device status
+python scripts/poll_ring.py --once --verbose        # run AFTER the replay: it stores the real device status
 python -m rhythm
 ```
 

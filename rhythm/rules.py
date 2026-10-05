@@ -158,7 +158,12 @@ def decide_for_day(
     cutoff, reason_base = compute_cutoff(settings, bucket, samples)
     cutoff_text = cutoff.strftime("%H:%M")
     cutoff_at = datetime.combine(target_day, cutoff, tzinfo=tz)
-    common = {"samples": len(samples), "cutoff": cutoff_text, "usual_window": usual_window(samples)}
+    common = {
+        "samples": len(samples),
+        "cutoff": cutoff_text,
+        "usual_window": usual_window(samples),
+        "bucket": bucket,
+    }
 
     if today_first is None:
         if ring_connection_lost(store, settings, now_local):

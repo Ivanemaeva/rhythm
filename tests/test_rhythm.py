@@ -163,6 +163,15 @@ class RuleTests(RhythmCase):
         resumed_day = THURSDAY + timedelta(days=2)  # Saturday, away ended on Friday
         self.assertEqual(self.store.active_away_until(resumed_day.isoformat()), None)
 
+    def test_away_period_does_not_pause_days_before_it_starts(self) -> None:
+        self.seed_history(THURSDAY)
+        trip_start = THURSDAY + timedelta(days=3)
+        self.store.record_reply(
+            trip_start.isoformat(), "away", "x", (trip_start + timedelta(days=4)).isoformat()
+        )
+        before = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 11))
+        self.assertEqual(before["decision"], "care_alert")
+
     def test_offline_device_is_not_a_care_alert(self) -> None:
         self.seed_history(THURSDAY)
         self.store.set_device_status(DEVICE, False, datetime.now(timezone.utc).isoformat(), "{}")
@@ -517,6 +526,38 @@ class MorningLogicTests(RhythmCase):
         result = decide_for_day(self.store, polling, DEVICE, THURSDAY, at(THURSDAY, 10, 15))
         self.assertEqual(result["decision"], "care_alert")
 
+    def test_verbose_sync_shows_requests_but_never_the_token(self) -> None:
+        import contextlib
+        import io
+
+        client = Mock()
+        client.__enter__ = Mock(return_value=client)
+        client.__exit__ = Mock(return_value=False)
+        request = httpx.Request("GET", "https://example.test")
+        client.get.side_effect = [
+            httpx.Response(200, json={"data": [{"id": DEVICE}]}, request=request),
+            httpx.Response(200, json={"data": {"attributes": {"online": True}}}, request=request),
+            httpx.Response(200, json={"data": [], "links": {}}, request=request),
+        ]
+        output = io.StringIO()
+        with patch("rhythm.ring_api.httpx.Client", return_value=client), contextlib.redirect_stdout(output):
+            RingApi(
+                replace(self.settings, ring_access_token="secret-token-123"), self.store, verbose=True
+            ).sync()
+        self.assertIn("-> GET", output.getvalue())
+        self.assertIn("/status", output.getvalue())
+        self.assertNotIn("secret-token-123", output.getvalue())
+
+    def test_care_email_shows_usual_window_and_device_status(self) -> None:
+        self.seed_history(THURSDAY)
+        result = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 11))
+        bodies: list[str] = []
+        deliver_care_alert(
+            self.store, self.settings, THURSDAY, result, lambda s, subject, body: bodies.append(body)
+        )
+        self.assertIn("Her usual first activity on weekdays is between 08:00 and 08:00.", bodies[0])
+        self.assertIn("The Ring device is online", bodies[0])
+
     def test_successful_sync_records_ring_contact(self) -> None:
         client = Mock()
         client.__enter__ = Mock(return_value=client)
@@ -530,6 +571,17 @@ class MorningLogicTests(RhythmCase):
         with patch("rhythm.ring_api.httpx.Client", return_value=client):
             RingApi(replace(self.settings, ring_access_token="token"), self.store).sync()
         self.assertIsNotNone(self.store.get_state("ring_last_contact_utc"))
+
+
+class EvaluationTests(unittest.TestCase):
+    def test_simulation_catches_every_silent_day_and_never_alerts_during_trips(self) -> None:
+        from rhythm.evaluation import evaluate
+
+        settings = replace(make_settings(Path(":memory:")), ring_access_token="")
+        summary = evaluate(settings, households=4, days=70, seed=7)
+        self.assertEqual(summary["silent_caught"], summary["silent_total"])
+        self.assertEqual(summary["away_alerts"], 0)
+        self.assertLess(summary["false_alerts_per_month"], 1.0)
 
 
 class ReviewRegressionTests(RhythmCase):
@@ -810,6 +862,20 @@ class AppTests(unittest.TestCase):
         finally:
             self.app_module.settings = original
 
+    def test_setup_requires_her_consent(self) -> None:
+        response = self.client.post(
+            "/setup",
+            data={
+                "household": "Home",
+                "timezone": "Europe/Rome",
+                "members": "",
+                "language": "en",
+                "sensitivity": "Standard",
+            },
+        )
+        self.assertEqual(response.status_code, 422)
+        self.assertIn("consent", response.text.lower())
+
     def test_setup_saves_profile_and_family_recipients(self) -> None:
         self.assertEqual(self.client.get("/setup").status_code, 200)
         response = self.client.post(
@@ -820,6 +886,7 @@ class AppTests(unittest.TestCase):
                 "members": "Marco,marco@example.test\nAnna,anna@example.test",
                 "language": "it",
                 "sensitivity": "Careful",
+                "consent": "yes",
             },
         )
         self.assertEqual(response.status_code, 200)

@@ -11,7 +11,7 @@
 | 7. One command | Implemented | `python -m rhythm` launches the localhost dashboard and background polling/morning worker. |
 | 8. Rolling baseline | Implemented | Default 56 days (`BASELINE_DAYS`); initial 14-day learning is not restarted; alert and away-range days excluded. |
 | 9. Weekly summary | Implemented (fixed in review: a failed summary is now retried) | Plain template email once on Sunday evening; no generative service. |
-| 10. Privacy controls | Implemented | Local event metadata auto-deleted after 90 days while worker runs; dashboard export and delete-everything. |
+| 10. Privacy controls | Implemented | Raw event times auto-deleted after 8 weeks (the learning window) while the worker runs; dashboard export and delete-everything. |
 | 11. Italian/French email | Implemented | Care headline, threshold reasons, reply labels, activity follow-up, and weekly summary templates are localized. The legal/safety disclaimer remains the required English sentence. |
 | 12. Physical Ring Indoor Cam | Not testable in this code-only environment | No camera was purchased or connected. Verify European account/API access and real event behavior before describing hardware validation. |
 

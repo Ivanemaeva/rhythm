@@ -26,7 +26,8 @@ Doorbell and motion apps notify about everything, so families mute them, and the
 - Rhythm reads **event metadata only**: motion and doorbell-press times, plus device online status. Only motion counts as her activity.
 - The code never requests or processes video, images, or Ring Media endpoints. (A Ring app scope may bundle media permissions, so this guarantee comes from the code: `rhythm/ring_api.py` only calls device listing, device status and Event History.)
 - Stored events keep only IDs, device ID, event type and timestamps.
-- Data stays in a local SQLite file. Event data older than 90 days is deleted automatically, and the dashboard has **Export my data** and **Delete everything**.
+- Data stays in a local SQLite file. Raw event times are kept only as long as the learning window needs them (8 weeks) and then deleted automatically. The dashboard has **Export my data** and **Delete everything**, and a panel listing what Rhythm sees and never sees.
+- **Consent:** Setup cannot be saved until the family confirms she knows Rhythm is running, has seen what it uses, and agreed. The dashboard shows when consent was recorded. She can pause it (away mode) or stop it (Delete everything) at any time.
 - Activity cannot identify a person: it may be a visitor. The emails say so.
 
 ## How the rule works
@@ -40,6 +41,21 @@ Doorbell and motion apps notify about everything, so families mute them, and the
 - **Lost connection:** if Rhythm polls Ring but has not had a successful answer for `RING_STALE_MINUTES=30` (for example, an expired token), it reports a lost connection instead of a silent morning.
 
 The dashboard shows all of this: the learned usual window, the cutoff line on the chart, and today's live status ("Waiting: nothing recorded yet; Rhythm will speak up after 10:00"). It has light, dark and high-contrast display modes.
+
+## Evaluation on simulated households
+
+Rhythm's own rule was run on 60 simulated households over 16 weeks (realistic wake times, weekend shifts, noise, sleep-ins, night events, doorbell presses, trips, late mornings and silent days). **All data is synthetic.** Full report and chart: [`docs/evaluation.md`](docs/evaluation.md); regenerate with `python scripts/evaluate.py`.
+
+| Measure | Standard (default) | Careful |
+|---|---|---|
+| False alerts per household per month | 0.00 | 0.07 |
+| Silent days caught | 60 of 60 | 60 of 60 |
+| Late mornings (2–4 h late) caught | 94 of 140 | 122 of 140 |
+| Alerts during announced trips | 0 | 0 |
+
+The minimum wait is what keeps false alerts near zero (without it, a 15-minute margin gives about 1.4 false alerts a month). The trade-off is deliberate: Rhythm prefers missing a mild delay to crying wolf, and families who want earlier notice can choose Careful. The evaluation also found a real bug (an away period paused alerts on days before it started), which is now fixed and tested.
+
+![Margin versus false alerts and detection](docs/evaluation.png)
 
 ## Real vs. simulated (please read)
 
@@ -93,7 +109,7 @@ python -c "import secrets; print(secrets.token_urlsafe(32))"
 python scripts/replay_demo.py --reset-demo --send-email
 ```
 
-The email subject starts with `[SIMULATED DEMO]`. To preview the morning check without sending: `python scripts/check_morning.py --once --dry-run`. Without `REPLY_TOKEN_SECRET` the alert is still sent, just without buttons.
+The email subject starts with `[SIMULATED DEMO]`. Add `--scenario offline` to the replay to show the device-offline message instead of a care alert, and `--verbose` to `poll_ring.py` to print each Ring request and Ring's answer (the token is never printed). To preview the morning check without sending: `python scripts/check_morning.py --once --dry-run`. Without `REPLY_TOKEN_SECRET` the alert is still sent, just without buttons.
 
 Reply links point to `PUBLIC_BASE_URL` (default `http://127.0.0.1:8000`, which works when clicked on the same laptop). To click them on a phone during a demo, set a private `RHYTHM_ADMIN_TOKEN`, start a temporary HTTPS tunnel (for example `cloudflared tunnel --url http://127.0.0.1:8000`), set `PUBLIC_BASE_URL` to the HTTPS address it prints, and restart. Never tunnel the app without an admin token.
 
@@ -102,13 +118,15 @@ Reply links point to `PUBLIC_BASE_URL` (default `http://127.0.0.1:8000`, which w
 ```
 rhythm/      __main__.py (one-command launcher), app.py (FastAPI: dashboard, setup, replies, webhooks),
              morning.py (the morning check), rules.py (decision and baseline), profile.py (setup + sensitivity),
+             evaluation.py (simulated households),
              email_delivery.py (alerts, follow-ups, weekly summary, translations), reply_links.py (signed links),
              ring_api.py, ingestion.py, storage.py (SQLite), config.py, dashboard.html
-scripts/     list_devices.py, poll_ring.py, check_morning.py, replay_demo.py, e2e_simulated_day.py,
+scripts/     list_devices.py, poll_ring.py, check_morning.py, replay_demo.py, evaluate.py, e2e_simulated_day.py,
              test_email_delivery.py
 tests/       automated unittest suite (synthetic data; network and email are mocked)
 outputs/     synthetic_alert_test.py (pure-logic scenario)
-docs/        demo plan, Devpost text, product feedback, friction log, hardware checklist, test results
+docs/        evaluation (report + chart), demo plan, Devpost text, product feedback, friction log,
+             hardware checklist, test results
 ```
 
 ## Messy real-world data

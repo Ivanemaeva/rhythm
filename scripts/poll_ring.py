@@ -17,6 +17,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rhythm.config import Settings
+from rhythm.profile import effective_settings
 from rhythm.ring_api import RingApi
 from rhythm.storage import Store
 
@@ -26,6 +27,7 @@ def main() -> None:
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument("--once", action="store_true", help="sync once and exit")
+    parser.add_argument("--verbose", action="store_true", help="print each Ring request and Ring's answer")
     args = parser.parse_args()
 
     settings = Settings.from_env()
@@ -37,7 +39,7 @@ def main() -> None:
     try:
         while True:
             try:
-                print(RingApi(settings, store).sync())
+                print(RingApi(effective_settings(settings, store), store, verbose=args.verbose).sync())
             except Exception as exc:
                 print(f"Ring sync failed: {exc}", file=sys.stderr)
                 if args.once:

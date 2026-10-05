@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Replay three normal weeks and then a silent morning into Rhythm's SQLite store.
+"""Replay three normal weeks and then a silent morning (or an offline device) into Rhythm's SQLite store.
 
 All events are SYNTHETIC. The last day shows the real product behaviour: no activity by the
 household-local cutoff -> one gentle care alert with its reason; she then appears later.
@@ -21,7 +21,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from rhythm.config import Settings
-from rhythm.email_delivery import deliver_care_alert, send_smtp_email
+from rhythm.email_delivery import deliver_care_alert, deliver_offline_notice, send_smtp_email
 from rhythm.ingestion import ingest_webhook
 from rhythm.rules import decide_for_day
 from rhythm.storage import Store
@@ -56,6 +56,12 @@ def main() -> None:
     )
     parser.add_argument(
         "--today", type=date.fromisoformat, help="treat this date (YYYY-MM-DD) as the final day"
+    )
+    parser.add_argument(
+        "--scenario",
+        choices=("silent", "offline"),
+        default="silent",
+        help="final day: 'silent' (no activity -> care alert) or 'offline' (device offline -> device message)",
     )
     args = parser.parse_args()
     if args.delay_seconds < 0:
@@ -118,7 +124,46 @@ def main() -> None:
         f"Day 22/22  {final_day.isoformat()}  06:00 no activity yet -> {pending['decision']} (cutoff {cutoff_text})"
     )
 
+    def labeled_smtp(current: Settings, subject: str, body: str) -> None:
+        send_smtp_email(
+            current,
+            "[SIMULATED DEMO] " + subject,
+            "This is a demo replay using synthetic event times; it is not a live Ring observation.\n\n"
+            + body,
+        )
+
     after_cutoff = cutoff_at + timedelta(minutes=settings.alert_grace_minutes + 1)
+    if args.scenario == "offline":
+        # The Ring device goes offline: Rhythm must say "we can't see the device", never raise a care alert.
+        store.set_device_status(
+            device_id,
+            False,
+            datetime.now(timezone.utc).isoformat(),
+            '{"online": false, "source": "demo_replay"}',
+        )
+        decision = decide_for_day(store, settings, device_id, final_day, after_cutoff)
+        print(
+            f"Day 22/22  {final_day.isoformat()}  {after_cutoff.strftime('%H:%M')} device offline -> {decision['decision']}"
+        )
+        if decision.get("decision") != "device_offline":
+            store.close()
+            raise SystemExit(f"Expected the device-offline message, got: {decision}")
+        if args.send_email:
+            delivery = deliver_offline_notice(store, settings, final_day, decision, labeled_smtp)
+            print(f"Email: {delivery['delivery']} (device message, not a care alert)")
+        elif store.claim_alert_day(
+            f"offline-{final_day.isoformat()}",
+            "device_offline",
+            str(decision["reason"]),
+            datetime.now(timezone.utc).isoformat(),
+        ):
+            store.mark_alert_demo(f"offline-{final_day.isoformat()}")
+            print("Email: demo-only device message recorded (no email sent).")
+        print(f"Why: {decision['reason']}")
+        print("Replay complete. Open the dashboard: the device shows offline and no care alert was raised.")
+        store.close()
+        return
+
     decision = decide_for_day(store, settings, device_id, final_day, after_cutoff)
     print(
         f"Day 22/22  {final_day.isoformat()}  {after_cutoff.strftime('%H:%M')} still nothing -> {decision['decision']}"
@@ -128,15 +173,6 @@ def main() -> None:
         raise SystemExit(f"Expected a care alert on the silent morning, got: {decision}")
 
     if args.send_email:
-
-        def labeled_smtp(current: Settings, subject: str, body: str) -> None:
-            send_smtp_email(
-                current,
-                "[SIMULATED DEMO] " + subject,
-                "This is a demo replay using synthetic event times; it is not a live Ring observation.\n\n"
-                + body,
-            )
-
         delivery = deliver_care_alert(store, settings, final_day, decision, labeled_smtp)
         print(f"Email: {delivery['delivery']}")
     elif store.claim_alert_day(
