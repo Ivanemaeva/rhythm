@@ -38,6 +38,32 @@ def local_time(row, tz: ZoneInfo) -> datetime:
     return datetime.fromisoformat(row["occurred_at_utc"]).astimezone(tz)
 
 
+def counts_as_activity(row, settings: Settings) -> bool:
+    """Does this event say she is up?
+
+    * Doorbell presses are left out: a press usually means a visitor is outside, not that she is up.
+    * Events before the morning window (MORNING_START, default 05:00) are left out: a night trip,
+      a pet or car lights must not hide a silent morning.
+    """
+    if row["event_type"] == "doorbell":
+        return False
+    return local_time(row, settings.household_timezone).time() >= settings.morning_start
+
+
+def ring_connection_lost(store: Store, settings: Settings, now: datetime) -> bool:
+    """True when Rhythm is set up to poll Ring but has not heard from it for RING_STALE_MINUTES.
+
+    Without this, an expired token or an unreachable API would look exactly like a silent
+    morning and produce a false care alert.
+    """
+    if not settings.ring_access_token:
+        return False  # replay/demo mode or webhook-only setups: there is no polling to go stale
+    last = store.get_state("ring_last_contact_utc")
+    if not last:
+        return True
+    return now - datetime.fromisoformat(last) > timedelta(minutes=settings.ring_stale_minutes)
+
+
 def baseline(store: Store, settings: Settings, target_day: date) -> tuple[list[time], datetime | None]:
     """Learned first-activity times for target_day's bucket, and today's first activity.
 
@@ -54,6 +80,8 @@ def baseline(store: Store, settings: Settings, target_day: date) -> tuple[list[t
     first_by_day: dict[date, datetime] = {}
     today_first: datetime | None = None
     for row in store.events_for_devices():
+        if not counts_as_activity(row, settings):
+            continue
         local = local_time(row, tz)
         day = local.date()
         if day == target_day:
@@ -85,8 +113,8 @@ def decide_for_day(
     """Decide what Rhythm should do about one household-local day.
 
     Decisions: suppressed_fine, paused_away, device_offline, learning, pending,
-    normal, care_alert. A care_alert is produced in two situations:
-      * no activity has been seen and the local cutoff time has passed (a silent morning), or
+    normal, care_alert, connection_lost. A care_alert is produced in two situations:
+      * no activity has been seen and the cutoff plus a short grace period has passed (a silent morning), or
       * the first activity of the day arrived after the cutoff.
     `now` defaults to the current time and exists so tests and demos can replay a day.
     """
@@ -133,7 +161,16 @@ def decide_for_day(
     common = {"samples": len(samples), "cutoff": cutoff_text, "usual_window": usual_window(samples)}
 
     if today_first is None:
-        if now_local > cutoff_at:
+        if ring_connection_lost(store, settings, now_local):
+            return {
+                "decision": "connection_lost",
+                "reason": (
+                    "Rhythm has lost the connection to Ring, so it cannot tell whether the morning is quiet. "
+                    "Check the Ring authorization or the internet connection; no care alert was created."
+                ),
+                **common,
+            }
+        if now_local > cutoff_at + timedelta(minutes=settings.alert_grace_minutes):
             return {
                 "decision": "care_alert",
                 "reason": f"No activity had been seen by {cutoff_text}. {reason_base}",
@@ -142,7 +179,10 @@ def decide_for_day(
             }
         return {
             "decision": "pending",
-            "reason": f"No activity yet; Rhythm waits until {cutoff_text} before speaking up. {reason_base}",
+            "reason": (
+                f"No activity yet; Rhythm waits until {cutoff_text} (plus {settings.alert_grace_minutes} min "
+                f"for late-arriving events) before speaking up. {reason_base}"
+            ),
             **common,
         }
 

@@ -4,7 +4,7 @@ Checked on 2026-10-04 with Python 3.13. The automated tests use synthetic data; 
 
 | Check | Command | Result |
 |---|---|---|
-| Automated suite (42 tests) | `python -m unittest discover -s tests -v` | OK |
+| Automated suite (48 tests) | `python -m unittest discover -s tests -v` | OK |
 | Pure-logic scenario (21 days, 2 parts) | `python outputs/synthetic_alert_test.py` | PASS 1 and PASS 2 |
 | Ingestion to rule | `python scripts/e2e_simulated_day.py` | `care_alert` at 10:35 vs 10:00 cutoff |
 | Email send path and same-day suppression (fake sender) | `python scripts/test_email_delivery.py --dry-run` | first attempt passed, second suppressed |
@@ -16,7 +16,7 @@ Checked on 2026-10-04 with Python 3.13. The automated tests use synthetic data; 
 
 ## What the automated suite covers
 
-Silent and late mornings, learning period, fixed fallback, rolling 8-week baseline excluding alert and away days, sensitivity settings, timezone changes, offline devices, one alert per day per family member, SMTP failures, signed reply links (forged, expired, reused, scanner-safe GET, after-midnight replies), the activity follow-up, the weekly summary, family reply notes, Italian and French emails, multi-device Ring sync with mocked HTTP, webhook signatures and de-duplication, dashboard and setup endpoints, admin-token rules, export and delete-everything.
+Silent and late mornings, the morning window (night events ignored), doorbell presses not counted as her activity, the 10-minute grace period, lost Ring connection reported instead of a care alert, learning period, fixed fallback, rolling 8-week baseline excluding alert and away days, sensitivity settings, timezone changes, offline devices, one alert per day per family member, SMTP failures, signed reply links (forged, expired, reused, scanner-safe GET, after-midnight replies), the activity follow-up, the weekly summary, family reply notes, Italian and French emails, multi-device Ring sync with mocked HTTP, webhook signatures and de-duplication, dashboard and setup endpoints, admin-token rules, export and delete-everything.
 
 ## Bugs found in review and fixed (each has a regression test that failed before the fix)
 

@@ -90,6 +90,12 @@ class Settings:
     public_base_url: str = "http://127.0.0.1:8000"
     reply_token_secret: str = ""
     baseline_days: int = 56
+    # Events before this local time (night trips, pets, car lights) never count as the first activity.
+    morning_start: time = time(5, 0)
+    # Wait this long after the cutoff before a silent-morning alert, because Ring events can arrive late.
+    alert_grace_minutes: int = 10
+    # If Ring has not answered for this long, Rhythm reports a lost connection instead of a quiet morning.
+    ring_stale_minutes: int = 30
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -120,6 +126,9 @@ class Settings:
             public_base_url=load_public_base_url(os.getenv("PUBLIC_BASE_URL", "http://127.0.0.1:8000")),
             reply_token_secret=os.getenv("REPLY_TOKEN_SECRET", ""),
             baseline_days=max(1, int(os.getenv("BASELINE_DAYS", "56"))),
+            morning_start=parse_clock(os.getenv("MORNING_START", "05:00")),
+            alert_grace_minutes=max(0, int(os.getenv("ALERT_GRACE_MINUTES", "10"))),
+            ring_stale_minutes=max(5, int(os.getenv("RING_STALE_MINUTES", "30"))),
         )
 
     def bucket(self, weekday: int) -> str:

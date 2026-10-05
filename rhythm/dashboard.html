@@ -155,7 +155,7 @@
       el('timezone').textContent=data.timezone;
       el('household-name').textContent=data.household?`· ${data.household}`:'';
       el('usual-window').textContent=data.usual_window?.[0]?`${data.usual_window[0]}–${data.usual_window[1]} (${data.usual_bucket}s)`:'not enough observations yet'; el('cutoff').textContent=data.cutoff||'—'; window.rhythmUsual=data.usual_window||[];
-      el('live-status').textContent=data.decision==='pending'?`Waiting: nothing recorded yet; Rhythm will speak up after ${data.cutoff}.`:data.decision==='normal'?'Activity recorded within the usual window.':data.decision==='care_alert'?'Later than usual; a care alert was triggered.':data.decision==='device_offline'?'Device offline; no care alert.':'Current status: '+data.decision;
+      el('live-status').textContent=data.decision==='pending'?`Waiting: nothing recorded yet; Rhythm will speak up after ${data.cutoff} (plus a short grace period).`:data.decision==='normal'?'Activity recorded within the usual window.':data.decision==='care_alert'?'Later than usual; a care alert was triggered.':data.decision==='device_offline'?'Device offline; no care alert.':data.decision==='connection_lost'?'Connection to Ring lost; no care alert. Renew the Ring token or check the internet.':data.decision==='learning'?'Learning her routine; no alerts yet.':data.decision==='suppressed_fine'?'Family marked her fine today.':data.decision==='paused_away'?'Away mode: alerts paused.':'Current status: '+data.decision;
       el('live-reason').textContent=data.live_reason||'';
       el('today').textContent=data.state.today;
       el('mode').textContent=data.state.mode==='learning'?'Learning':'Active';

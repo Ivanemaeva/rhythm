@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urljoin
 
@@ -60,6 +60,8 @@ class RingApi:
                         json.dumps({"online": online, "reported_at": reported_at}),
                     )
                     results.append(self._sync_history(client, device_id, online))
+                # Remember when Ring last answered, so a failing connection is never mistaken for a quiet morning.
+                self.store.set_state("ring_last_contact_utc", datetime.now(timezone.utc).isoformat())
                 return {
                     "devices": len(ids),
                     "online": any(x.get("online") is True for x in results),

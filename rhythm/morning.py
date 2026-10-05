@@ -8,6 +8,7 @@ from .config import Settings
 from .email_delivery import (
     deliver_all_clear,
     deliver_care_alert,
+    deliver_connection_notice,
     deliver_offline_notice,
     deliver_weekly_summary,
     send_smtp_email,
@@ -17,7 +18,7 @@ from .ring_api import RingApi
 from .rules import decide_for_day
 from .storage import Store
 
-# A device-offline message is only sent from this local time on, so a night-time Wi-Fi blip stays quiet.
+# Device-offline and lost-connection messages are only sent from this local time on, so a night-time blip stays quiet.
 OFFLINE_NOTICE_AFTER = time(8, 0)
 # Event metadata older than this is deleted automatically (privacy retention).
 RETENTION_DAYS = 90
@@ -53,6 +54,10 @@ def run_once(
             summary["delivery"] = deliver_care_alert(store, settings, today, result, sender)["delivery"]
         elif result["decision"] == "device_offline" and now_local.time() >= OFFLINE_NOTICE_AFTER:
             summary["delivery"] = deliver_offline_notice(store, settings, today, result, sender)["delivery"]
+        elif result["decision"] == "connection_lost" and now_local.time() >= OFFLINE_NOTICE_AFTER:
+            summary["delivery"] = deliver_connection_notice(store, settings, today, result, sender)[
+                "delivery"
+            ]
     except Exception as exc:
         summary["delivery"] = f"failed: {exc}"
 

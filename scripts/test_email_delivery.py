@@ -25,7 +25,7 @@ from rhythm.storage import Store
 
 def settings_for(database_path: Path, dry_run: bool = False) -> Settings:
     settings = Settings.from_env()
-    values = {**settings.__dict__, "database_path": database_path}
+    values = {**settings.__dict__, "database_path": database_path, "ring_access_token": ""}
     if dry_run:
         values["reply_token_secret"] = values["reply_token_secret"] or "local-dry-run-reply-secret"
         values["alert_to"] = values["alert_to"] or "dry-run@example.invalid"

@@ -65,7 +65,8 @@ def main() -> None:
     if args.database:
         settings = replace(settings, database_path=args.database)
     device_id = args.device_id or settings.ring_device_id or "rhythm-demo-device"
-    settings = replace(settings, ring_device_id=device_id)
+    # Synthetic replay: no live Ring polling is involved, so the lost-connection check does not apply.
+    settings = replace(settings, ring_device_id=device_id, ring_access_token="")
     tz = settings.household_timezone
     final_day = args.today or datetime.now(tz).date()
     start_day = final_day - timedelta(days=21)
@@ -117,7 +118,7 @@ def main() -> None:
         f"Day 22/22  {final_day.isoformat()}  06:00 no activity yet -> {pending['decision']} (cutoff {cutoff_text})"
     )
 
-    after_cutoff = cutoff_at + timedelta(minutes=1)
+    after_cutoff = cutoff_at + timedelta(minutes=settings.alert_grace_minutes + 1)
     decision = decide_for_day(store, settings, device_id, final_day, after_cutoff)
     print(
         f"Day 22/22  {final_day.isoformat()}  {after_cutoff.strftime('%H:%M')} still nothing -> {decision['decision']}"

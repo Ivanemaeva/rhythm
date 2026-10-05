@@ -99,7 +99,7 @@ class RuleTests(RhythmCase):
     def test_silent_morning_waits_then_alerts_after_cutoff(self) -> None:
         self.seed_history(THURSDAY)
         before = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 9, 30))
-        after = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 10, 1))
+        after = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 10, 11))
         self.assertEqual(before["decision"], "pending")
         self.assertEqual(after["decision"], "care_alert")
         self.assertEqual(after["first_activity"], "none")
@@ -140,7 +140,7 @@ class RuleTests(RhythmCase):
 
     def test_few_weekend_samples_use_fixed_fallback(self) -> None:
         self.seed_history(SUNDAY)  # 14 days contain only 4 weekend days
-        result = decide_for_day(self.store, self.settings, DEVICE, SUNDAY, at(SUNDAY, 11, 1))
+        result = decide_for_day(self.store, self.settings, DEVICE, SUNDAY, at(SUNDAY, 11, 11))
         self.assertEqual(result["decision"], "care_alert")
         self.assertIn("Only 4 weekend samples", str(result["reason"]))
 
@@ -219,8 +219,8 @@ class DeliveryTests(RhythmCase):
         outbox: list[str] = []
         sender = lambda s, subject, body: outbox.append(subject)  # noqa: E731
         early = run_once(self.settings, self.store, DEVICE, at(THURSDAY, 9, 0), sync=False, sender=sender)
-        late = run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 5), sync=False, sender=sender)
-        later = run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 35), sync=False, sender=sender)
+        late = run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 15), sync=False, sender=sender)
+        later = run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 45), sync=False, sender=sender)
         self.assertEqual(early["decision"], "pending")
         self.assertEqual(late["delivery"], "sent")
         self.assertEqual(later["delivery"], "suppressed")
@@ -421,7 +421,7 @@ class AddedFeatureTests(RhythmCase):
             {
                 "event_id": "after-alert",
                 "device_id": DEVICE,
-                "event_type": "doorbell",
+                "event_type": "motion",
                 "occurred_at_utc": local.astimezone(timezone.utc).isoformat(),
                 "occurred_at_local": local.isoformat(),
                 "source": "test",
@@ -433,7 +433,10 @@ class AddedFeatureTests(RhythmCase):
         second = deliver_all_clear(self.store, self.settings, day, lambda s, sub, b: emails.append(b))
         self.assertEqual(first["delivery"], "sent")
         self.assertEqual(second["delivery"], "suppressed")
-        self.assertIn("Activity was recorded at 11:35 (front door). This may be her or a visitor.", emails[0])
+        self.assertIn(
+            "Activity was recorded at 11:35 (motion on a Ring device). This may be her or a visitor.",
+            emails[0],
+        )
         self.assertNotIn("seen", emails[0].lower())
 
     def test_privacy_retention_and_delete_everything(self) -> None:
@@ -457,6 +460,78 @@ class AddedFeatureTests(RhythmCase):
         self.assertEqual(self.store.family(), [])
 
 
+class MorningLogicTests(RhythmCase):
+    """Morning window, doorbell presses, grace period and lost Ring connection."""
+
+    def test_night_event_does_not_hide_a_silent_morning(self) -> None:
+        self.seed_history(THURSDAY)
+        ingest_webhook(webhook("night", at(THURSDAY, 3, 0)), self.store, TZ)
+        result = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 10, 11))
+        self.assertEqual(result["decision"], "care_alert")
+        self.assertEqual(result["first_activity"], "none")
+
+    def test_doorbell_press_does_not_count_as_her_activity(self) -> None:
+        self.seed_history(THURSDAY)
+        ingest_webhook(webhook("visitor", at(THURSDAY, 9, 0), "button_press"), self.store, TZ)
+        result = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 10, 11))
+        self.assertEqual(result["decision"], "care_alert")
+
+    def test_grace_period_waits_for_late_arriving_events(self) -> None:
+        self.seed_history(THURSDAY)
+        result = decide_for_day(self.store, self.settings, DEVICE, THURSDAY, at(THURSDAY, 10, 5))
+        self.assertEqual(result["decision"], "pending")
+
+    def test_lost_ring_connection_is_not_a_care_alert(self) -> None:
+        self.seed_history(THURSDAY)
+        polling = replace(self.settings, ring_access_token="token")
+        self.store.set_state(
+            "ring_last_contact_utc", (at(THURSDAY, 8, 0)).astimezone(timezone.utc).isoformat()
+        )
+        sent: list[str] = []
+        summary = run_once(
+            polling,
+            self.store,
+            DEVICE,
+            at(THURSDAY, 10, 15),
+            sync=False,
+            sender=lambda s, subject, body: sent.append(subject),
+        )
+        run_once(
+            polling,
+            self.store,
+            DEVICE,
+            at(THURSDAY, 10, 30),
+            sync=False,
+            sender=lambda s, subject, body: sent.append(subject),
+        )
+        self.assertEqual(summary["decision"], "connection_lost")
+        self.assertEqual(sent, ["Rhythm: connection to Ring lost"])
+        self.assertIsNone(self.store.alert_status(THURSDAY.isoformat()))
+
+    def test_recent_ring_contact_allows_the_care_alert(self) -> None:
+        self.seed_history(THURSDAY)
+        polling = replace(self.settings, ring_access_token="token")
+        self.store.set_state(
+            "ring_last_contact_utc", (at(THURSDAY, 10, 10)).astimezone(timezone.utc).isoformat()
+        )
+        result = decide_for_day(self.store, polling, DEVICE, THURSDAY, at(THURSDAY, 10, 15))
+        self.assertEqual(result["decision"], "care_alert")
+
+    def test_successful_sync_records_ring_contact(self) -> None:
+        client = Mock()
+        client.__enter__ = Mock(return_value=client)
+        client.__exit__ = Mock(return_value=False)
+        request = httpx.Request("GET", "https://example.test")
+        client.get.side_effect = [
+            httpx.Response(200, json={"data": [{"id": DEVICE}]}, request=request),
+            httpx.Response(200, json={"data": {"attributes": {"online": True}}}, request=request),
+            httpx.Response(200, json={"data": [], "links": {}}, request=request),
+        ]
+        with patch("rhythm.ring_api.httpx.Client", return_value=client):
+            RingApi(replace(self.settings, ring_access_token="token"), self.store).sync()
+        self.assertIsNotNone(self.store.get_state("ring_last_contact_utc"))
+
+
 class ReviewRegressionTests(RhythmCase):
     """Bugs found in review; each test failed before its fix."""
 
@@ -475,7 +550,7 @@ class ReviewRegressionTests(RhythmCase):
     def test_all_clear_is_sent_after_silent_morning_then_late_activity(self) -> None:
         self.seed_history(THURSDAY)
         sent, sender = self.outbox()
-        run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 5), sync=False, sender=sender)
+        run_once(self.settings, self.store, DEVICE, at(THURSDAY, 10, 15), sync=False, sender=sender)
         ingest_webhook(webhook("late", at(THURSDAY, 11, 35)), self.store, TZ)
         summary = run_once(self.settings, self.store, DEVICE, at(THURSDAY, 11, 40), sync=False, sender=sender)
         run_once(self.settings, self.store, DEVICE, at(THURSDAY, 11, 45), sync=False, sender=sender)
@@ -502,7 +577,7 @@ class ReviewRegressionTests(RhythmCase):
             ]
         )
         sent, sender = self.outbox(fail_for="bob@broken.test")
-        for minute in (5, 7, 9):
+        for minute in (15, 17, 19):
             summary = run_once(
                 self.settings, self.store, DEVICE, at(THURSDAY, 10, minute), sync=False, sender=sender
             )

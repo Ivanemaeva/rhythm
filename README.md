@@ -18,12 +18,12 @@ Doorbell and motion apps notify about everything, so families mute them, and the
 4. **A later-than-usual morning.** Nothing is recorded by the cutoff. Every family member gets one email with the reason, a reminder that a quiet morning can be normal, and two buttons: **She's fine** and **She's away until…**
 5. **Someone answers.** One tap confirms. The other family members are told who checked in, so not everyone calls at once.
 6. **Activity is recorded later.** One short follow-up: "Activity was recorded at 11:35 (front door). This may be her or a visitor." Rhythm never claims she was seen.
-7. **The device is offline.** A different message: "We can't see the device." This is not a care alert.
+7. **The device is offline, or Rhythm loses its connection to Ring.** A different message: "We can't see the device" or "Connection to Ring lost". Neither is a care alert: missing data is never mistaken for a quiet morning.
 8. **Sunday evening.** A short, calm weekly summary.
 
 ## Privacy by design
 
-- Rhythm reads **event metadata only**: motion and doorbell-press times, plus device online status.
+- Rhythm reads **event metadata only**: motion and doorbell-press times, plus device online status. Only motion counts as her activity.
 - The code never requests or processes video, images, or Ring Media endpoints. (A Ring app scope may bundle media permissions, so this guarantee comes from the code: `rhythm/ring_api.py` only calls device listing, device status and Event History.)
 - Stored events keep only IDs, device ID, event type and timestamps.
 - Data stays in a local SQLite file. Event data older than 90 days is deleted automatically, and the dashboard has **Export my data** and **Delete everything**.
@@ -31,11 +31,13 @@ Doorbell and motion apps notify about everything, so families mute them, and the
 
 ## How the rule works
 
+- **What counts as her activity:** motion events after the morning window starts (`MORNING_START=05:00`). Night events (a bathroom trip, a pet, car lights) and doorbell presses (usually a visitor outside) are stored but never count as her first activity.
 - **Bucket:** today is a weekday or a weekend day; each has its own routine.
 - **Baseline:** the first activity of each day in the last 8 weeks (`BASELINE_DAYS=56`), leaving out days that triggered an alert and days marked away. The 14-day learning period happens once, at the start, and never restarts.
 - **Cutoff:** the 95th percentile of the baseline + a margin, never earlier than a minimum wait (10:00 weekdays, 11:00 weekends). With fewer than 5 mornings in a bucket, a conservative fixed cutoff is used.
 - **Sensitivity:** Relaxed waits 30 minutes longer (margin 30 min), Careful speaks up 30 minutes earlier (margin 5 min), Standard uses the `.env` values. These are demo choices, not calibrated values.
-- **Decision:** if nothing is recorded by the cutoff, or the first activity comes after it, Rhythm sends one care alert.
+- **Decision:** if nothing is recorded by the cutoff plus a short grace period (`ALERT_GRACE_MINUTES=10`, because Ring events can arrive a couple of minutes late), or the first activity comes after the cutoff, Rhythm sends one care alert.
+- **Lost connection:** if Rhythm polls Ring but has not had a successful answer for `RING_STALE_MINUTES=30` (for example, an expired token), it reports a lost connection instead of a silent morning.
 
 The dashboard shows all of this: the learned usual window, the cutoff line on the chart, and today's live status ("Waiting: nothing recorded yet; Rhythm will speak up after 10:00"). It has light, dark and high-contrast display modes.
 
@@ -108,6 +110,12 @@ tests/       automated unittest suite (synthetic data; network and email are moc
 outputs/     synthetic_alert_test.py (pure-logic scenario)
 docs/        demo plan, Devpost text, product feedback, friction log, hardware checklist, test results
 ```
+
+## Messy real-world data
+
+- **Duplicates:** each Ring event ID is stored once, and webhooks are de-duplicated by request ID.
+- **Out-of-order or late events:** the first activity is the earliest time recorded, whatever the arrival order, and silent-morning alerts wait a 10-minute grace period.
+- **API errors:** a failed sync never stops the morning check; a Ring outage or expired token is reported as a lost connection, not as a quiet morning. Email failures are retried per family member on the next check.
 
 ## Security notes
 

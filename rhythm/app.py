@@ -16,7 +16,7 @@ from .ingestion import ingest_webhook
 from .ring_api import RingApi
 from .reply_links import InvalidReplyToken, parse_reply_token, reply_token_is_available
 from .profile import effective_settings as profile_settings, family_members
-from .rules import baseline, decide_for_day, local_time, usual_window
+from .rules import baseline, counts_as_activity, decide_for_day, local_time, usual_window
 from .storage import Store
 from .email_delivery import send_smtp_email, localize
 from dataclasses import replace
@@ -177,6 +177,8 @@ def dashboard_data() -> dict[str, object]:
     alert_days = {str(alert["local_day"]) for alert in alerts}
     points: dict[str, dict[str, object]] = {}
     for row in store.events_for_devices():
+        if not counts_as_activity(row, live_settings):
+            continue  # doorbell presses and night events are not her morning activity
         local = local_time(row, live_settings.household_timezone)
         local_date = local.date()
         if local_date < start_day:

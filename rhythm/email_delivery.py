@@ -12,7 +12,7 @@ from typing import Callable
 from .config import Settings
 from .profile import family_members
 from .reply_links import email_reply_urls
-from .rules import local_time
+from .rules import counts_as_activity, local_time
 from .storage import Store
 
 DISCLAIMER = "Rhythm is a check-in aid, not a safety or medical device."
@@ -356,11 +356,15 @@ def deliver_all_clear(
         # Only a silent-morning alert gets a follow-up; a late-activity alert already said when activity began.
         return {"delivery": "not_sent", "reason": "No silent-morning alert was sent today."}
     tz = settings.household_timezone
-    later = [row for row in store.events_for_devices() if local_time(row, tz).date() == local_day]
+    later = [
+        row
+        for row in store.events_for_devices()
+        if local_time(row, tz).date() == local_day and counts_as_activity(row, settings)
+    ]
     if not later:
         return {"delivery": "not_sent", "reason": "No activity recorded after the alert yet."}
     event = later[0]
-    what = "front door" if event["event_type"] == "doorbell" else "motion on a Ring device"
+    what = "motion on a Ring device"
     sentence = (
         f"Activity was recorded at {local_time(event, tz):%H:%M} ({what}). This may be her or a visitor. "
         "If you haven't reached her yet, a quick call is still a good idea."
@@ -390,7 +394,7 @@ def deliver_weekly_summary(
     active_days = {
         local_time(row, tz).date()
         for row in store.events_for_devices()
-        if start <= local_time(row, tz).date() <= end
+        if start <= local_time(row, tz).date() <= end and counts_as_activity(row, settings)
     }
     alerts = sum(
         1
@@ -413,6 +417,34 @@ def deliver_weekly_summary(
         sentence + "\n\n" + DISCLAIMER,
         sender,
     )
+
+
+def build_connection_notice(result: dict[str, str | int]) -> tuple[str, str]:
+    """Return (subject, body) for the lost-connection message (not a care alert)."""
+    body = (
+        "A note from Rhythm\n\n"
+        "Rhythm has lost its connection to Ring, so it cannot tell whether her morning is usual.\n\n"
+        f"Detail: {result['reason']}\n\n"
+        "Please reconnect Rhythm to Ring (for example, renew the access token). This is not a care alert.\n\n"
+        f"{DISCLAIMER}"
+    )
+    return "Rhythm: connection to Ring lost", body
+
+
+def deliver_connection_notice(
+    store: Store,
+    settings: Settings,
+    target_day: date,
+    result: dict[str, str | int],
+    sender: Callable[[Settings, str, str], None] = send_smtp_email,
+) -> dict[str, object]:
+    """Send at most one lost-connection message per local day (never a care alert)."""
+    if result.get("decision") != "connection_lost":
+        return {"delivery": "not_sent", "reason": "The Ring connection is fine."}
+    subject, body = build_connection_notice(result)
+    sent = _send_to_family(store, settings, "connection", target_day.isoformat(), subject, body, sender)
+    sent["reason"] = str(result["reason"])
+    return sent
 
 
 def deliver_offline_notice(
